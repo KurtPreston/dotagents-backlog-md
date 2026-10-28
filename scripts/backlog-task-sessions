@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Find agent sessions that mention a Backlog.md task, so /task can tell whether one is already working on it.
+# Searches Copilot CLI session state, Claude Code transcripts, and Zed threads active in the last N days for
+# the task ID, and prints one tab-separated line per session, newest first:
+#   agent  status  last-activity  folder  title  session-id
+# status is "live" for a running Copilot session, "recent" for activity in the last 15 minutes, else "idle".
+# Usage: backlog-task-sessions TASK-N [--days N]   (default 14 days)
+set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+usage() {
+  echo "usage: backlog-task-sessions TASK-N [--days N]" >&2
+  exit 2
+}
+
+# Parse the task ID and the optional look-back window
+[[ "$#" -ge 1 ]] || usage
+shopt -s nocasematch
+[[ "$1" =~ ^(task-)?([0-9]+)$ ]] || usage
+shopt -u nocasematch
+num="${BASH_REMATCH[2]}"
+shift
+days=14
+if [[ "${1:-}" == "--days" && "${2:-}" =~ ^[0-9]+$ ]]; then
+  days="$2"
+elif [[ "$#" -gt 0 ]]; then
+  usage
+fi
+
+# Match TASK-7 and task-7 file names, but not TASK-70
+pattern="task-${num}([^0-9]|\$)"
+now="$(date +%s)"
+results="$(mktemp)"
+trap 'rm -f "$results"' EXIT
+
+# Print one result line, prefixed with its epoch time for sorting
+emit() {
+  local agent="$1" live="$2" epoch="$3" folder="$4" title="$5" id="$6" status=idle
+  if [[ "$live" == true ]]; then
+    status=live
+  elif ((now - epoch < 900)); then
+    status=recent
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$epoch" "$agent" "$status" \
+    "$(date -r "$epoch" '+%Y-%m-%d %H:%M')" "$folder" "${title:--}" "$id" >>"$results"
+}
+
+# Copilot CLI: each session folder holds events.jsonl, workspace.yaml, and an inuse.PID.lock per running process
+for dir in "$HOME"/.copilot/session-state/*/; do
+  events="$dir/events.jsonl"
+  [[ -f "$events" ]] || continue
+  [[ -n "$(find "$events" -mtime "-$days" 2>/dev/null)" ]] || continue
+  grep -qEi "$pattern" "$events" || continue
+  live=false
+  for lock in "$dir"inuse.*.lock; do
+    [[ -e "$lock" ]] || continue
+    pid="${lock##*inuse.}"
+    pid="${pid%.lock}"
+    if kill -0 "$pid" 2>/dev/null; then live=true; fi
+  done
+  folder="$(sed -n 's/^cwd: //p' "$dir/workspace.yaml" 2>/dev/null | head -n 1)"
+  title="$(awk '/^name: [|>]/ { getline; print; exit } /^name: / { sub(/^name: /, ""); print; exit }' \
+    "$dir/workspace.yaml" 2>/dev/null | sed -E 's/^[[:space:]]*"?//; s/\\n.*//' | cut -c 1-80)"
+  emit copilot "$live" "$(stat -f %m "$events")" "$folder" "$title" "$(basename "$dir")"
+done
+
+# Claude Code: one transcript per session under ~/.claude/projects/<encoded-folder>/
+if [[ -d "$HOME/.claude/projects" ]]; then
+  while IFS= read -r file; do
+    grep -qEi "$pattern" "$file" || continue
+    folder="$(grep -m 1 -o '"cwd":"[^"]*"' "$file" | sed 's/^"cwd":"//; s/"$//')"
+    title="$(grep -m 1 -o '"summary":"[^"]*"' "$file" | sed 's/^"summary":"//; s/"$//')"
+    emit claude false "$(stat -f %m "$file")" "$folder" "$title" "$(basename "$file" .jsonl)"
+  done < <(find "$HOME/.claude/projects" -name '*.jsonl' -mtime "-$days" 2>/dev/null)
+fi
+
+# Zed: threads live in a SQLite table, usually as zstd-compressed JSON. grep -q stops reading at the
+# first match, so pipefail would report the decompressor's broken pipe as a miss
+set +o pipefail
+zed_db="$HOME/Library/Application Support/Zed/threads/threads.db"
+if [[ -f "$zed_db" ]]; then
+  query="select id, cast(strftime('%s', updated_at) as int), replace(ifnull(folder_paths, ''), char(10), ' '),
+    replace(summary, char(9), ' '), data_type, hex(data) from threads
+    where strftime('%s', updated_at) >= strftime('%s', 'now', '-$days days')"
+  while IFS=$'\t' read -r id epoch folder title type data; do
+    if [[ "$type" == zstd ]]; then
+      xxd -r -p <<<"$data" | zstd -dq 2>/dev/null | grep -qEi "$pattern" || continue
+    else
+      xxd -r -p <<<"$data" | grep -qEi "$pattern" || continue
+    fi
+    emit zed false "$epoch" "$folder" "$title" "$id"
+  done < <(sqlite3 -readonly -separator $'\t' "$zed_db" "$query")
+fi
+
+# Print newest first, without the sort key
+sort -rn "$results" | cut -f 2-

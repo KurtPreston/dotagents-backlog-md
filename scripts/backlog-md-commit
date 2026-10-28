@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Commit the day's changes to the Backlog.md task list in BACKLOG_CWD (from ~/.localrc, default ~/Code/tasks).
+# Stages everything, asks Copilot CLI to summarize the staged diff into a commit message, and falls back
+# to a plain list of changed tasks if Copilot fails. Does nothing when there are no changes.
+# Usage: backlog-md-commit [--dry-run]   (--dry-run prints the message and leaves the index unchanged)
+set -euo pipefail
+
+# Make Homebrew and mise-managed tools available when launchd runs this with a bare PATH
+export PATH="$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:$PATH"
+plugin_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+prompt_file="$plugin_dir/prompts/commit-message.md"
+max_diff_chars=80000
+
+# Find the task list in BACKLOG_CWD, reading just that line from ~/.localrc when launchd didn't provide it,
+# so the file's other secrets never reach Copilot's environment
+if [[ -z "${BACKLOG_CWD:-}" && -f "$HOME/.localrc" ]]; then
+  BACKLOG_CWD="$(sed -nE 's/^(export[[:space:]]+)?BACKLOG_CWD=["'\'']?([^"'\'']*)["'\'']?[[:space:]]*$/\2/p' "$HOME/.localrc" | tail -n 1)"
+  BACKLOG_CWD="${BACKLOG_CWD/#\~/$HOME}"
+  BACKLOG_CWD="${BACKLOG_CWD/#\$HOME/$HOME}"
+fi
+tasks_dir="${BACKLOG_CWD:-$HOME/Code/tasks}"
+
+# Parse the single optional flag
+dry_run=false
+if [[ "${1:-}" == "--dry-run" ]]; then
+  dry_run=true
+elif [[ "$#" -gt 0 ]]; then
+  echo "usage: backlog-md-commit [--dry-run]" >&2
+  exit 2
+fi
+
+# Skip quietly when the task list has no changes since the last commit
+cd "$tasks_dir"
+if [[ -z "$(git status --porcelain)" ]]; then
+  echo "backlog-md-commit: no changes in $tasks_dir"
+  exit 0
+fi
+
+# Stage everything, restoring the index afterward on a dry run
+git add -A
+if [[ "$dry_run" == true ]]; then
+  trap 'git reset -q' EXIT
+fi
+today="$(date +%Y-%m-%d)"
+diff="$(git diff --cached --no-color --no-ext-diff)"
+if [[ "${#diff}" -gt "$max_diff_chars" ]]; then
+  diff="${diff:0:$max_diff_chars}"$'\n[diff truncated]'
+fi
+
+# Ask Copilot for the message, denying shell, file-write, and network tools so it can only answer
+prompt="$(cat "$prompt_file")"$'\n\n'"Date: $today"$'\n\nStaged changes:\n\n'"$diff"
+message=""
+if copilot_output="$(copilot -p "$prompt" -s --no-custom-instructions --disable-builtin-mcps \
+  --no-auto-update --disable-client-telemetry --deny-tool shell --deny-tool write --deny-tool url 2>/dev/null)"; then
+  # Drop code fences in case the model wrapped its answer anyway
+  message="$(printf '%s\n' "$copilot_output" | sed '/^```/d')"
+fi
+
+# Fall back to a plain list of changed task files when Copilot fails or returns nothing
+if [[ -z "${message//[[:space:]]/}" ]]; then
+  echo "backlog-md-commit: Copilot summary failed; using the file list" >&2
+  changes="$(git diff --cached --name-status | awk -F'\t' '{ n = $NF; sub(/.*\//, "", n); sub(/\.md$/, "", n); print "- " $1 " " n }')"
+  message="Tasks for $today"$'\n\n'"$changes"
+fi
+
+# Print the message on a dry run, otherwise commit with it
+if [[ "$dry_run" == true ]]; then
+  printf '%s\n' "$message"
+else
+  printf '%s\n' "$message" | git commit -q -F -
+  git --no-pager log -1 --format='backlog-md-commit: committed %h %s'
+fi

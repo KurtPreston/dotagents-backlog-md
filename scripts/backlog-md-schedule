@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Install, remove, or inspect the launchd job that runs backlog-md-commit every night.
+# Renders launchd/backlog-md-commit.plist into ~/Library/LaunchAgents and loads it for the current user.
+# Usage: backlog-md-schedule install|uninstall|status|run
+set -euo pipefail
+
+# Resolve the template, the installed commit script, and the launchd paths
+label="com.kurtpreston.backlog-md-commit"
+plugin_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+template="$plugin_dir/launchd/backlog-md-commit.plist"
+script="${AGENTS_HOME:-$HOME/.agents}/bin/backlog-md-commit"
+plist="$HOME/Library/LaunchAgents/$label.plist"
+log="$HOME/Library/Logs/backlog-md-commit.log"
+domain="gui/$(id -u)"
+
+case "${1:-}" in
+  install)
+    # Require the script link from install.sh so launchd never points into a moved checkout
+    if [[ ! -x "$script" ]]; then
+      echo "backlog-md-schedule: $script is missing; run dotagents' ./install.sh first" >&2
+      exit 1
+    fi
+
+    # Render the template, then replace any loaded copy of the job
+    mkdir -p "$(dirname "$plist")" "$(dirname "$log")"
+    sed -e "s|__SCRIPT__|$script|g" -e "s|__LOG__|$log|g" "$template" >"$plist"
+    plutil -lint -s "$plist"
+    launchctl bootout "$domain/$label" 2>/dev/null || true
+    launchctl bootstrap "$domain" "$plist"
+    echo "backlog-md-schedule: installed $plist (nightly at 23:55, log: $log)"
+    ;;
+
+  uninstall)
+    # Unload the job and delete its plist; the log stays for reference
+    launchctl bootout "$domain/$label" 2>/dev/null || true
+    rm -f "$plist"
+    echo "backlog-md-schedule: removed $label"
+    ;;
+
+  status)
+    # Show whether the job is loaded, its last exit status, and recent log output
+    if launchctl print "$domain/$label" >/dev/null 2>&1; then
+      launchctl print "$domain/$label" | grep -E $'^\t(state|last exit code|runs) ='
+    else
+      echo "backlog-md-schedule: $label is not loaded"
+    fi
+    if [[ -f "$log" ]]; then
+      echo "--- last lines of $log"
+      tail -n 5 "$log"
+    fi
+    ;;
+
+  run)
+    # Trigger the job now, through launchd, to test it in its real environment
+    launchctl kickstart "$domain/$label"
+    echo "backlog-md-schedule: started $label; check '$(basename "$0") status' for the result"
+    ;;
+
+  *)
+    echo "usage: backlog-md-schedule install|uninstall|status|run" >&2
+    exit 2
+    ;;
+esac
