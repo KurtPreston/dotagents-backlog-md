@@ -109,4 +109,10 @@ After the pull request merges, or earlier to try the branch:
 
 ## Obstacles
 
+- launchd runs jobs with a bare PATH that may not include Node or Copilot CLI, so `lib/config.mjs` can't count on `node` under launchd. Workaround: in phase 4, `backlog-md-schedule install` writes the installing shell's PATH into the launchd job.
+- shellcheck isn't installed, so validation is `bash -n` plus the test script.
+
 ## Found bugs
+
+- **Nightly Copilot summary always fails here** (needs discussion): when `copilot` isn't on launchd's PATH, nightly commits quietly use the file-list fallback. It's a setup issue rather than a code bug. Phase 4's PATH capture helps only if `copilot` is on the shell's PATH.
+- **Fallback commit message mangles non-ASCII filenames** (separate and straightforward): `backlog-md-commit`'s file-list fallback prints octal escapes such as `\342\200\224` and a stray trailing `"`, because git quotes such paths. Fix with `git -c core.quotepath=false`.

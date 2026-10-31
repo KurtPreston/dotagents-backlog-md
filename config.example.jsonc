@@ -1,0 +1,15 @@
+// Machine-specific settings for the backlog-md plugin. Copy this file to config.jsonc,
+// which git ignores, and edit it there. A missing config.jsonc means every default below.
+{
+  "sync": {
+    // Keep the board in step with a private git remote shared by your machines. When false,
+    // the board stays local and a nightly job commits each day's changes.
+    "enabled": false,
+
+    // The remote's URL, such as an SSH URL on a self-hosted git server.
+    "remote": "",
+
+    // The branch every machine commits to.
+    "branch": "main",
+  },
+}
