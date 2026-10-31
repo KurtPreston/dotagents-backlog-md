@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Keep the Backlog.md board in BACKLOG_CWD in step with a private git remote, when config.jsonc enables sync.
+# Commits local changes with a plain message, fetches, rebases onto the remote branch, and pushes. An
+# unreachable remote is fine: local commits stay put and the next run pushes them. With sync disabled,
+# it does nothing, so agents can call it unconditionally.
+# Usage: backlog-md-sync           commit, pull, and push
+#        backlog-md-sync --pull    commit and pull without pushing, such as before creating a task
+#        backlog-md-sync setup     connect this machine's board to the remote, cloning it if missing
+set -euo pipefail
+
+# Load the shared setup and the commit-message builder
+plugin_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# shellcheck source=../lib/common.sh
+source "$plugin_dir/lib/common.sh"
+# shellcheck source=../lib/sync-message.sh
+source "$plugin_dir/lib/sync-message.sh"
+# shellcheck source=../lib/sync-resolve.sh
+source "$plugin_dir/lib/sync-resolve.sh"
+remote_ref="origin/$SYNC_BRANCH"
+
+say() { echo "backlog-md-sync: $*"; }
+die() {
+  echo "backlog-md-sync: $*" >&2
+  exit 1
+}
+
+# Fail fast instead of hanging when the remote is down or asks for a password
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o ConnectTimeout=5 -o BatchMode=yes}"
+export GIT_TERMINAL_PROMPT=0
+net_git() { git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 "$@"; }
+
+# Commit everything in the board with a plain message, if anything changed
+commit_local_changes() {
+  [[ -n "$(git status --porcelain)" ]] || return 0
+  git add -A
+  sync_commit_message | git commit -q -F -
+  git --no-pager log -1 --format='backlog-md-sync: committed %h %s'
+}
+
+# Rebase local commits onto the remote branch, resolving what conflicts it can
+rebase_onto_remote() {
+  git rev-parse -q --verify "$remote_ref" >/dev/null || return 0
+  if ! git rebase -q "$remote_ref" >/dev/null 2>&1; then
+    resolve_rebase_conflicts || return 1
+  fi
+  renumber_duplicate_ids
+}
+
+# Push, fetching and rebasing once more if another machine pushed first
+push_to_remote() {
+  local attempt
+  for attempt in 1 2; do
+    if net_git push -q origin "HEAD:refs/heads/$SYNC_BRANCH" 2>/dev/null; then
+      return 0
+    fi
+    [[ "$attempt" -eq 1 ]] || break
+    net_git fetch -q origin 2>/dev/null || break
+    rebase_onto_remote || return 1
+  done
+  say "push failed; local commits will be pushed on the next run"
+}
+
+# Pick up any board changes, then commit, fetch, rebase, and optionally push
+sync_board() {
+  local pull_only="$1"
+  cd "$tasks_dir"
+  [[ "$(git branch --show-current)" == "$SYNC_BRANCH" ]] || die "$tasks_dir is not on branch $SYNC_BRANCH"
+  commit_local_changes
+  if ! net_git fetch -q origin 2>/dev/null; then
+    say "remote unreachable; will retry on the next run"
+    return 0
+  fi
+  rebase_onto_remote || exit 1
+  [[ "$pull_only" == true ]] && return 0
+  if [[ "$(git rev-list --count "$remote_ref..HEAD" 2>/dev/null || echo 1)" -gt 0 ]]; then
+    push_to_remote || exit 1
+  fi
+}
+
+# Hold a lock so an agent and the scheduled job never sync the same board at once
+acquire_lock() {
+  lock_dir="$tasks_dir/.git/backlog-md-sync.lock"
+  if [[ -d "$lock_dir" && -n "$(find "$lock_dir" -maxdepth 0 -mmin +10)" ]]; then
+    rmdir "$lock_dir"
+  fi
+  local waited=0
+  until mkdir "$lock_dir" 2>/dev/null; do
+    [[ "$waited" -lt 30 ]] || die "another sync has held $lock_dir for 30s; try again later"
+    sleep 1
+    waited=$((waited + 1))
+  done
+  trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+}
+
+# Connect an existing board to the remote, or clone the remote into a missing board
+setup_board() {
+  [[ "$SYNC_ENABLED" == true && -n "$SYNC_REMOTE" ]] || die "set sync.enabled and sync.remote in $plugin_dir/config.jsonc first"
+
+  # Clone when this machine has no board yet
+  if [[ ! -e "$tasks_dir" ]]; then
+    net_git clone -q -b "$SYNC_BRANCH" "$SYNC_REMOTE" "$tasks_dir" || die "couldn't clone $SYNC_BRANCH from the remote; is it pushed yet?"
+    git -C "$tasks_dir" config core.sshCommand "ssh -o ConnectTimeout=5 -o BatchMode=yes"
+    say "cloned the board into $tasks_dir"
+    return 0
+  fi
+
+  # Otherwise attach the remote, pushing this board only when the remote has no history
+  cd "$tasks_dir"
+  [[ "$(git branch --show-current)" == "$SYNC_BRANCH" ]] || die "$tasks_dir is not on branch $SYNC_BRANCH"
+  local existing
+  existing="$(git remote get-url origin 2>/dev/null || true)"
+  if [[ -n "$existing" ]]; then
+    [[ "$existing" == "$SYNC_REMOTE" ]] || die "origin in $tasks_dir is $existing, not the configured remote"
+  else
+    local heads
+    heads="$(net_git ls-remote --heads "$SYNC_REMOTE")" || die "can't reach the remote"
+    [[ -z "$heads" ]] || die "the remote already has a board; merging separate boards is unsupported. Move $tasks_dir aside and rerun setup to clone it."
+    git remote add origin "$SYNC_REMOTE"
+  fi
+
+  # Let new task IDs account for tasks other machines have pushed, and keep Backlog.md's own
+  # fetches from hanging when the remote is down, then sync
+  git config core.sshCommand "ssh -o ConnectTimeout=5 -o BatchMode=yes"
+  if [[ "$(BACKLOG_CWD="$tasks_dir" backlog config get remoteOperations)" != "true" ]]; then
+    BACKLOG_CWD="$tasks_dir" backlog config set remoteOperations true >/dev/null
+  fi
+  commit_local_changes
+  net_git fetch -q origin 2>/dev/null || true
+  rebase_onto_remote || exit 1
+  net_git push -q -u origin "HEAD:refs/heads/$SYNC_BRANCH" || die "push to the remote failed"
+  say "connected $tasks_dir to the remote and pushed $SYNC_BRANCH"
+}
+
+# Dispatch on the single optional argument
+case "${1:-}" in
+  setup)
+    setup_board
+    ;;
+  "" | --pull)
+    [[ "$SYNC_ENABLED" == true ]] || exit 0
+    [[ -d "$tasks_dir/.git" ]] || die "$tasks_dir is not a git repository; run 'backlog-md-sync setup'"
+    acquire_lock
+    pull_only=false
+    [[ "${1:-}" == --pull ]] && pull_only=true
+    sync_board "$pull_only"
+    ;;
+  *)
+    echo "usage: backlog-md-sync [--pull | setup]" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Exercise backlog-md-sync against a temporary bare repository and two board clones standing in for two
+# machines, using the real backlog CLI. Prints "ok" or "FAIL" per scenario; exits non-zero on any failure.
+# Usage: tests/run-sync-tests
+set -euo pipefail
+
+# Isolate git and the boards from this machine's settings
+plugin_dir="$(cd "$(dirname "$0")/.." && pwd)"
+sync="$plugin_dir/scripts/backlog-md-sync"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+export GIT_CONFIG_GLOBAL="$work/gitconfig" GIT_CONFIG_NOSYSTEM=1
+git config --global user.name "Sync Test"
+git config --global user.email "sync-test@example.com"
+git config --global init.defaultBranch main
+remote="$work/remote.git"
+a="$work/a"
+b="$work/b"
+failures=0
+started=$SECONDS
+
+# Point the plugin at a config enabling sync with the temporary remote
+write_config() {
+  printf '{ "sync": { "enabled": %s, "remote": "%s", "branch": "main", }, }\n' "$1" "$remote" >"$work/config.jsonc"
+}
+export BACKLOG_MD_CONFIG="$work/config.jsonc"
+write_config true
+
+# Helpers: run sync or backlog against a board, and inspect the remote
+sync_in() { BACKLOG_CWD="$1" "$sync" "${@:2}"; }
+bl() { BACKLOG_CWD="$1" backlog "${@:2}" --plain >/dev/null; }
+remote_subject() { git --git-dir="$remote" log -1 --format=%s main; }
+remote_body() { git --git-dir="$remote" log -1 --format=%b main; }
+check() {
+  local name="$1"
+  shift
+  if "$@"; then
+    echo "ok   - $name ($((SECONDS - started))s)"
+  else
+    echo "FAIL - $name"
+    failures=$((failures + 1))
+  fi
+}
+
+# Setup pushes an existing board to an empty remote
+test_setup_push() {
+  git init -q --bare "$remote"
+  mkdir "$a" && git -C "$a" init -q
+  (cd "$a" && backlog init sync-test --defaults --integration-mode none >/dev/null)
+  sync_in "$a" setup >/dev/null &&
+    [[ "$(git -C "$a" rev-parse HEAD)" == "$(git --git-dir="$remote" rev-parse main)" ]] &&
+    [[ "$(BACKLOG_CWD="$a" backlog config get remoteOperations)" == true ]] &&
+    [[ -z "$(git -C "$a" status --porcelain)" ]]
+}
+
+# Setup clones the remote when the board doesn't exist
+test_setup_clone() {
+  sync_in "$b" setup >/dev/null && [[ -f "$b/backlog/config.yml" ]]
+}
+
+# Sync disabled leaves changes uncommitted
+test_disabled_noop() {
+  write_config false
+  bl "$a" task create "Disabled change"
+  local out
+  out="$(sync_in "$a")"
+  write_config true
+  [[ -z "$out" && -n "$(git -C "$a" status --porcelain)" ]]
+}
+
+# A new task is committed and pushed as "created"
+test_create() {
+  sync_in "$a" >/dev/null && [[ "$(remote_subject)" == "TASK-1 Disabled-change: created" ]]
+}
+
+# A status change names both columns
+test_status_change() {
+  bl "$a" task edit TASK-1 -s "In Progress"
+  sync_in "$a" >/dev/null && [[ "$(remote_subject)" == "TASK-1 Disabled-change: To Do → In Progress" ]]
+}
+
+# Several changes get a count and a line each
+test_multi_task() {
+  bl "$a" task create "Second task"
+  bl "$a" task edit TASK-1 -s Done
+  sync_in "$a" >/dev/null &&
+    [[ "$(remote_subject)" == "Update 2 tasks" ]] &&
+    grep -qx -- "- TASK-1 Disabled-change: In Progress → Done" <<<"$(remote_body)" &&
+    grep -qx -- "- TASK-2 Second-task: created" <<<"$(remote_body)"
+}
+
+# Edits to different tasks on two machines both reach the remote and each other
+test_two_machines() {
+  sync_in "$b" >/dev/null
+  bl "$a" task edit TASK-1 --append-notes "from a"
+  bl "$b" task edit TASK-2 --append-notes "from b"
+  sync_in "$a" >/dev/null && sync_in "$b" >/dev/null && sync_in "$a" >/dev/null &&
+    [[ "$(git -C "$a" rev-parse HEAD)" == "$(git --git-dir="$remote" rev-parse main)" ]] &&
+    [[ "$(git -C "$b" rev-parse HEAD)" == "$(git --git-dir="$remote" rev-parse main)" ]] &&
+    grep -rq "from b" "$a/backlog/tasks" && grep -rq "from a" "$b/backlog/tasks"
+}
+
+# An unreachable remote keeps the local commit, exits 0, and pushes on the next run
+test_unreachable() {
+  mv "$remote" "$remote.away"
+  bl "$a" task edit TASK-2 -s "In Progress"
+  local out status=0
+  out="$(sync_in "$a")" || status=$?
+  mv "$remote.away" "$remote"
+  [[ "$status" -eq 0 && "$out" == *unreachable* ]] &&
+    [[ "$(git -C "$a" log -1 --format=%s)" == "TASK-2 Second-task: To Do → In Progress" ]] &&
+    sync_in "$a" >/dev/null &&
+    [[ "$(remote_subject)" == "TASK-2 Second-task: To Do → In Progress" ]]
+}
+
+# Setup refuses to push a separate board to a remote that already has one
+test_setup_refuses_merge() {
+  local c="$work/c"
+  mkdir "$c" && git -C "$c" init -q
+  (cd "$c" && backlog init other --defaults --integration-mode none >/dev/null)
+  ! sync_in "$c" setup 2>/dev/null && [[ -z "$(git -C "$c" remote)" ]]
+}
+
+# Run each scenario in order, since later ones build on earlier boards
+for scenario in setup_push setup_clone disabled_noop create status_change multi_task two_machines \
+  unreachable setup_refuses_merge; do
+  check "$scenario" "test_$scenario"
+done
+[[ -f "$plugin_dir/tests/sync-conflict-tests.sh" ]] && source "$plugin_dir/tests/sync-conflict-tests.sh"
+echo "$failures failure(s) in $((SECONDS - started))s"
+[[ "$failures" -eq 0 ]]
