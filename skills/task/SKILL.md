@@ -11,7 +11,10 @@ next step its column calls for. Unlike `/backlog-triage`, this skill can go on
 to do the work, but only after the user confirms the plan.
 
 Use the board in `~/Code/tasks`. Pass `BACKLOG_CWD=~/Code/tasks` on every
-`backlog` command, and change tasks only through `backlog` commands.
+`backlog` command, and change tasks only through `backlog` commands. Run
+`BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync --pull` before
+finding the task, and `BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync`
+after updating it, as the task-tracking rule's Syncing section describes.
 
 ## 1. Find the task
 
