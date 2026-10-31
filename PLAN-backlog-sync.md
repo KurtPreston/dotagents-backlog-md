@@ -111,6 +111,8 @@ After the pull request merges, or earlier to try the branch:
 
 - launchd runs jobs with a bare PATH that may not include Node or Copilot CLI, so `lib/config.mjs` can't count on `node` under launchd. Workaround: in phase 4, `backlog-md-schedule install` writes the installing shell's PATH into the launchd job.
 - shellcheck isn't installed, so validation is `bash -n` plus the test script.
+- `git status --porcelain` quotes paths with spaces, and every task filename has them. Workaround: list conflicted files with `git diff --name-only --diff-filter=U`, and check that both sides exist with `git ls-files -u`.
+- This machine's git sets `safe.bareRepository=explicit`, so tests inspect the bare remote with `--git-dir` rather than `-C`.
 
 ## Found bugs
 
