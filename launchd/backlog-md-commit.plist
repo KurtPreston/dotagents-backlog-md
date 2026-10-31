@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Template for the nightly task-list commit. backlog-md-schedule fills in __SCRIPT__ and __LOG__. -->
+<!-- Template for the nightly task-list commit. backlog-md-schedule fills in __SCRIPT__, __LOG__, and __PATH__. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
   <string>com.kurtpreston.backlog-md-commit</string>
 
-  <!-- Run the commit script, which sets up its own PATH -->
+  <!-- Run the commit script with the PATH of the shell that installed the job, so it finds node and copilot -->
   <key>ProgramArguments</key>
   <array>
     <string>__SCRIPT__</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
 
   <!-- Every night at 23:55; launchd runs a missed job once the Mac wakes -->
   <key>StartCalendarInterval</key>

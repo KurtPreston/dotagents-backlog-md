@@ -12,6 +12,12 @@ source "$plugin_dir/lib/common.sh"
 prompt_file="$plugin_dir/prompts/commit-message.md"
 max_diff_chars=80000
 
+# Leave commits to backlog-md-sync when sync is on, so no summary commit skips the push
+if [[ "$SYNC_ENABLED" == true ]]; then
+  echo "backlog-md-commit: sync is on, so backlog-md-sync commits instead; rerun 'backlog-md-schedule install' to switch jobs"
+  exit 0
+fi
+
 # Parse the single optional flag
 dry_run=false
 if [[ "${1:-}" == "--dry-run" ]]; then

@@ -1,59 +1,102 @@
 #!/usr/bin/env bash
-# Install, remove, or inspect the launchd job that runs backlog-md-commit every night.
-# Renders launchd/backlog-md-commit.plist into ~/Library/LaunchAgents and loads it for the current user.
+# Install, remove, or inspect the launchd job that keeps the task board committed.
+# With sync off in config.jsonc, the job runs backlog-md-commit nightly; with sync on, it runs
+# backlog-md-sync at login and every 15 minutes. Install renders the matching template from launchd/
+# into ~/Library/LaunchAgents with this shell's PATH, loads it, and removes the other job.
 # Usage: backlog-md-schedule install|uninstall|status|run
 set -euo pipefail
 
-# Resolve the template, the installed commit script, and the launchd paths
-label="com.kurtpreston.backlog-md-commit"
+# Load the shared setup, which reads the sync mode
 plugin_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
-template="$plugin_dir/launchd/backlog-md-commit.plist"
-script="${AGENTS_HOME:-$HOME/.agents}/bin/backlog-md-commit"
-plist="$HOME/Library/LaunchAgents/$label.plist"
-log="$HOME/Library/Logs/backlog-md-commit.log"
+# shellcheck source=../lib/common.sh
+source "$plugin_dir/lib/common.sh"
 domain="gui/$(id -u)"
+agents_bin="${AGENTS_HOME:-$HOME/.agents}/bin"
+
+# Name each job's label, plist, and log
+label_for() { echo "com.kurtpreston.$1"; }
+plist_for() { echo "$HOME/Library/LaunchAgents/$(label_for "$1").plist"; }
+log_for() { echo "$HOME/Library/Logs/$1.log"; }
+
+# Pick the job for the current mode, and list whichever jobs are installed
+if [[ "$SYNC_ENABLED" == true ]]; then
+  job="backlog-md-sync"
+  other="backlog-md-commit"
+  schedule="at login and every 15 minutes"
+else
+  job="backlog-md-commit"
+  other="backlog-md-sync"
+  schedule="nightly at 23:55"
+fi
+installed_jobs() {
+  local name
+  for name in backlog-md-commit backlog-md-sync; do
+    [[ -f "$(plist_for "$name")" ]] && echo "$name"
+  done
+  return 0
+}
+
+# Escape a value for both XML text and a sed replacement
+escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/[\\|&]/\\&/g'; }
+
+# Unload a job and delete its plist; its log stays for reference
+remove_job() {
+  launchctl bootout "$domain/$(label_for "$1")" 2>/dev/null || true
+  rm -f "$(plist_for "$1")"
+}
 
 case "${1:-}" in
   install)
     # Require the script link from install.sh so launchd never points into a moved checkout
+    script="$agents_bin/$job"
     if [[ ! -x "$script" ]]; then
       echo "backlog-md-schedule: $script is missing; run dotagents' ./install.sh first" >&2
       exit 1
     fi
 
-    # Render the template, then replace any loaded copy of the job
+    # Render the template with this shell's PATH, then replace any loaded copy of either job
+    plist="$(plist_for "$job")"
+    log="$(log_for "$job")"
     mkdir -p "$(dirname "$plist")" "$(dirname "$log")"
-    sed -e "s|__SCRIPT__|$script|g" -e "s|__LOG__|$log|g" "$template" >"$plist"
+    sed -e "s|__SCRIPT__|$(escape "$script")|g" -e "s|__LOG__|$(escape "$log")|g" \
+      -e "s|__PATH__|$(escape "$PATH")|g" "$plugin_dir/launchd/$job.plist" >"$plist"
     plutil -lint -s "$plist"
-    launchctl bootout "$domain/$label" 2>/dev/null || true
+    remove_job "$other"
+    launchctl bootout "$domain/$(label_for "$job")" 2>/dev/null || true
     launchctl bootstrap "$domain" "$plist"
-    echo "backlog-md-schedule: installed $plist (nightly at 23:55, log: $log)"
+    echo "backlog-md-schedule: installed $plist ($schedule, log: $log)"
     ;;
 
   uninstall)
-    # Unload the job and delete its plist; the log stays for reference
-    launchctl bootout "$domain/$label" 2>/dev/null || true
-    rm -f "$plist"
-    echo "backlog-md-schedule: removed $label"
+    for name in $(installed_jobs); do
+      remove_job "$name"
+      echo "backlog-md-schedule: removed $(label_for "$name")"
+    done
     ;;
 
   status)
-    # Show whether the job is loaded, its last exit status, and recent log output
-    if launchctl print "$domain/$label" >/dev/null 2>&1; then
-      launchctl print "$domain/$label" | grep -E $'^\t(state|last exit code|runs) ='
-    else
-      echo "backlog-md-schedule: $label is not loaded"
-    fi
-    if [[ -f "$log" ]]; then
-      echo "--- last lines of $log"
-      tail -n 5 "$log"
-    fi
+    # Show each installed job's loaded state, last exit status, and recent log output
+    [[ -n "$(installed_jobs)" ]] || echo "backlog-md-schedule: no job installed"
+    for name in $(installed_jobs); do
+      echo "--- $(label_for "$name")"
+      if launchctl print "$domain/$(label_for "$name")" >/dev/null 2>&1; then
+        launchctl print "$domain/$(label_for "$name")" | grep -E $'^\t(state|last exit code|runs) ='
+      else
+        echo "not loaded"
+      fi
+      [[ "$name" == "$job" ]] || echo "sync is $([[ "$SYNC_ENABLED" == true ]] && echo on || echo off); rerun install to switch jobs"
+      if [[ -f "$(log_for "$name")" ]]; then
+        tail -n 5 "$(log_for "$name")"
+      fi
+    done
     ;;
 
   run)
-    # Trigger the job now, through launchd, to test it in its real environment
-    launchctl kickstart "$domain/$label"
-    echo "backlog-md-schedule: started $label; check '$(basename "$0") status' for the result"
+    # Trigger the installed job now, through launchd, to test it in its real environment
+    for name in $(installed_jobs); do
+      launchctl kickstart "$domain/$(label_for "$name")"
+      echo "backlog-md-schedule: started $(label_for "$name"); check '$(basename "$0") status' for the result"
+    done
     ;;
 
   *)
