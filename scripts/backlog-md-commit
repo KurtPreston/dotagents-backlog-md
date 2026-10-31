@@ -59,7 +59,7 @@ fi
 # Fall back to a plain list of changed task files when Copilot fails or returns nothing
 if [[ -z "${message//[[:space:]]/}" ]]; then
   echo "backlog-md-commit: Copilot summary failed; using the file list" >&2
-  changes="$(git diff --cached --name-status | awk -F'\t' '{ n = $NF; sub(/.*\//, "", n); sub(/\.md$/, "", n); print "- " $1 " " n }')"
+  changes="$(git -c core.quotepath=false diff --cached --name-status | awk -F'\t' '{ n = $NF; sub(/.*\//, "", n); sub(/\.md$/, "", n); print "- " $1 " " n }')"
   message="Tasks for $today"$'\n\n'"$changes"
 fi
 
