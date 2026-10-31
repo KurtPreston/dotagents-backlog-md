@@ -15,8 +15,20 @@ BACKLOG_CWD=~/Code/tasks backlog task edit TASK-7 -s Done --final-summary "Added
 ```
 
 - Change tasks only through `backlog` commands, not by editing the files, so their metadata stays valid.
-- Don't commit in `~/Code/tasks`. A scheduled job commits the day's changes each night.
+- Give each task a short title of about six words or fewer that names the work, such as "Sync task board across machines". The title becomes the task's filename and appears in every commit about the task.
+- Never `git commit` in `~/Code/tasks` by hand. Scripts commit it, as described under Syncing.
 - If a sandbox blocks writing to `~/Code/tasks`, ask me for access rather than skipping the update.
+
+### Syncing
+
+The board may be synced between my machines through a private git remote. Sync the board at these points:
+
+```sh
+BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync --pull   # once at session start, before first reading the board, and before creating a task
+BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync          # after changing tasks, once the batch of edits is done
+```
+
+The script does nothing when sync is off, so run it either way. When the remote is unreachable, it says so and exits successfully; carry on, since a later run pushes the changes. When it reports a conflict it couldn't merge, tell me, and leave the board as it is rather than resolving it with git yourself.
 
 The columns are:
 

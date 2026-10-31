@@ -5,20 +5,18 @@
 # Usage: backlog-md-commit [--dry-run]   (--dry-run prints the message and leaves the index unchanged)
 set -euo pipefail
 
-# Make Homebrew and mise-managed tools available when launchd runs this with a bare PATH
-export PATH="$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# Load the shared setup: PATH, the board's location in tasks_dir, and sync settings
 plugin_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# shellcheck source=../lib/common.sh
+source "$plugin_dir/lib/common.sh"
 prompt_file="$plugin_dir/prompts/commit-message.md"
 max_diff_chars=80000
 
-# Find the task list in BACKLOG_CWD, reading just that line from ~/.localrc when launchd didn't provide it,
-# so the file's other secrets never reach Copilot's environment
-if [[ -z "${BACKLOG_CWD:-}" && -f "$HOME/.localrc" ]]; then
-  BACKLOG_CWD="$(sed -nE 's/^(export[[:space:]]+)?BACKLOG_CWD=["'\'']?([^"'\'']*)["'\'']?[[:space:]]*$/\2/p' "$HOME/.localrc" | tail -n 1)"
-  BACKLOG_CWD="${BACKLOG_CWD/#\~/$HOME}"
-  BACKLOG_CWD="${BACKLOG_CWD/#\$HOME/$HOME}"
+# Leave commits to backlog-md-sync when sync is on, so no summary commit skips the push
+if [[ "$SYNC_ENABLED" == true ]]; then
+  echo "backlog-md-commit: sync is on, so backlog-md-sync commits instead; rerun 'backlog-md-schedule install' to switch jobs"
+  exit 0
 fi
-tasks_dir="${BACKLOG_CWD:-$HOME/Code/tasks}"
 
 # Parse the single optional flag
 dry_run=false

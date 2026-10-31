@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for the task-board sync. backlog-md-schedule fills in __SCRIPT__, __LOG__, and __PATH__. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kurtpreston.backlog-md-sync</string>
+
+  <!-- Run the sync script with the PATH of the shell that installed the job, so it finds node and copilot -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__SCRIPT__</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+
+  <!-- At login, then every 15 minutes, to pick up edits made outside agents and other machines' pushes -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <!-- Keep output for troubleshooting -->
+  <key>StandardOutPath</key>
+  <string>__LOG__</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG__</string>
+</dict>
+</plist>

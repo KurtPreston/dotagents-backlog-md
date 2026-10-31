@@ -16,7 +16,11 @@ merge, or post anything during triage. The only work that starts is what the
 user delegates, and it starts as soon as they delegate it.
 
 Use the board in `~/Code/tasks`. Pass `BACKLOG_CWD=~/Code/tasks` on every
-`backlog` command, and change tasks only through `backlog` commands.
+`backlog` command, and change tasks only through `backlog` commands. Run
+`BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync --pull` before
+loading the board, and `BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync`
+after applying each decision, as the task-tracking rule's Syncing section
+describes.
 
 ## 1. Load the Waiting column
 
