@@ -12,4 +12,12 @@
     // The branch every machine commits to.
     "branch": "main",
   },
+
+  "browser": {
+    // Serve the web board from a launchd job that starts at login and restarts if it exits.
+    "enabled": true,
+
+    // The board's port on 127.0.0.1.
+    "port": 6420,
+  },
 }

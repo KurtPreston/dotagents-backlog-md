@@ -8,7 +8,8 @@ A dotagents plugin for tracking all my work, coding and otherwise, in one [Backl
 - `scripts/backlog-task-sessions` — `backlog-task-sessions TASK-N [--days N]` lists Copilot CLI, Claude Code, and Zed sessions from the last 14 days that mention a task, newest first, flagging running Copilot sessions as `live`. `/task` uses it to avoid starting work that another session already has in hand.
 - `scripts/backlog-md-commit` — commits the task list's changes, with a message that Copilot CLI writes from the day's diff. It falls back to a plain list of changed tasks if Copilot fails, and does nothing when there are no changes. `--dry-run` prints the message without committing. When sync is on, it leaves commits to `backlog-md-sync`.
 - `scripts/backlog-md-sync` — in [synced mode](#syncing-between-machines), commits each change with a plain message, then fetches, rebases, and pushes. `--pull` skips the push, and `setup` connects a machine's board to the remote. It does nothing when sync is off.
-- `scripts/backlog-md-schedule` — installs, removes, or inspects the launchd job: `backlog-md-commit` nightly at 23:55, or `backlog-md-sync` at login and every 15 minutes when sync is on.
+- `scripts/backlog-md-browser` — serves the web board on the port set in `config.jsonc`, for the browser launchd job. It exits with an error rather than switching ports when the port is taken.
+- `scripts/backlog-md-schedule` — installs, removes, or inspects the launchd jobs: `backlog-md-commit` nightly at 23:55, or `backlog-md-sync` at login and every 15 minutes when sync is on, plus `backlog-md-browser` kept running unless the browser is turned off.
 - `prompts/commit-message.md` — the instructions Copilot gets for the nightly commit message.
 - `prompts/resolve-conflict.md` — the instructions Copilot gets when two machines edited the same task.
 - `launchd/` — the job templates that `backlog-md-schedule` fills in.
@@ -40,14 +41,17 @@ That makes plain `backlog` commands use it from any folder. It also overrides Ba
 ```sh
 backlog task list --plain   # Text list, grouped by column
 backlog board               # Kanban board in the terminal
-backlog browser             # Web board at http://localhost:6420
 ```
+
+The web board is always at http://localhost:6420/board, served by a launchd job that `backlog-md-schedule install` sets up. To change its port or turn it off, set `browser.port` or `browser.enabled` in `config.jsonc` and rerun `install`.
 
 ## Scheduling
 
 The job runs through launchd, not cron. If the Mac is asleep at 23:55, cron skips that day's run, while launchd runs it once the Mac wakes. A missed or failed run loses nothing: the next one commits every change since the last commit.
 
-`install` saves the current shell's PATH into the job, so launchd finds `node` and `copilot` wherever they're installed. Rerun it after moving either one, or after turning sync on or off.
+A second job runs `backlog-md-browser` at login and restarts it within 30 seconds if it exits. Edits made in the web board are saved straight to the task files, and the commit or sync job picks them up.
+
+`install` saves the current shell's PATH into the jobs, so launchd finds `node`, `backlog`, and `copilot` wherever they're installed. Rerun it after moving any of them, or after changing `config.jsonc`.
 
 ```sh
 ~/.agents/bin/backlog-md-schedule status   # Loaded state, last exit code, recent log lines

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Serve the Backlog.md web board for BACKLOG_CWD on 127.0.0.1, for the launchd job to keep running.
+# Finds the board the same way the other scripts do, reads the port from config.jsonc, and fails
+# rather than picking another port when that one is taken, so the board's address never moves.
+# Usage: backlog-md-browser
+set -euo pipefail
+
+# Load the shared setup, which finds the board and reads the browser settings
+plugin_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# shellcheck source=../lib/common.sh
+source "$plugin_dir/lib/common.sh"
+
+# Check the board and port before starting, since the server would prompt for another port
+[[ -d "$tasks_dir/backlog" ]] || {
+  echo "backlog-md-browser: no board in $tasks_dir" >&2
+  exit 1
+}
+if lsof -nP -iTCP:"$BROWSER_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "backlog-md-browser: port $BROWSER_PORT is already in use" >&2
+  exit 1
+fi
+
+# Serve the board without opening a browser window
+cd "$tasks_dir"
+exec backlog browser --no-open --port "$BROWSER_PORT"

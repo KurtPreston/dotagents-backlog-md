@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Install, remove, or inspect the launchd job that keeps the task board committed.
-# With sync off in config.jsonc, the job runs backlog-md-commit nightly; with sync on, it runs
-# backlog-md-sync at login and every 15 minutes. Install renders the matching template from launchd/
-# into ~/Library/LaunchAgents with this shell's PATH, loads it, and removes the other job.
+# Install, remove, or inspect the launchd jobs that keep the task board committed and served.
+# With sync off in config.jsonc, one job runs backlog-md-commit nightly; with sync on, it runs
+# backlog-md-sync at login and every 15 minutes. With browser on, a second job keeps backlog-md-browser
+# serving the web board. Install renders each template from launchd/ into ~/Library/LaunchAgents with
+# this shell's PATH, loads it, and removes jobs the config turned off.
 # Usage: backlog-md-schedule install|uninstall|status|run
 set -euo pipefail
 
@@ -30,7 +31,7 @@ else
 fi
 installed_jobs() {
   local name
-  for name in backlog-md-commit backlog-md-sync; do
+  for name in backlog-md-commit backlog-md-sync backlog-md-browser; do
     [[ -f "$(plist_for "$name")" ]] && echo "$name"
   done
   return 0
@@ -45,26 +46,38 @@ remove_job() {
   rm -f "$(plist_for "$1")"
 }
 
+# Render a job's template with this shell's PATH, then replace any loaded copy
+install_job() {
+  local name="$1" script="$agents_bin/$1" plist log
+  # Require the script link from install.sh so launchd never points into a moved checkout
+  if [[ ! -x "$script" ]]; then
+    echo "backlog-md-schedule: $script is missing; run dotagents' ./install.sh first" >&2
+    exit 1
+  fi
+  plist="$(plist_for "$name")"
+  log="$(log_for "$name")"
+  mkdir -p "$(dirname "$plist")" "$(dirname "$log")"
+  sed -e "s|__SCRIPT__|$(escape "$script")|g" -e "s|__LOG__|$(escape "$log")|g" \
+    -e "s|__PATH__|$(escape "$PATH")|g" "$plugin_dir/launchd/$name.plist" >"$plist"
+  plutil -lint -s "$plist"
+  launchctl bootout "$domain/$(label_for "$name")" 2>/dev/null || true
+  launchctl bootstrap "$domain" "$plist"
+}
+
 case "${1:-}" in
   install)
-    # Require the script link from install.sh so launchd never points into a moved checkout
-    script="$agents_bin/$job"
-    if [[ ! -x "$script" ]]; then
-      echo "backlog-md-schedule: $script is missing; run dotagents' ./install.sh first" >&2
-      exit 1
-    fi
-
-    # Render the template with this shell's PATH, then replace any loaded copy of either job
-    plist="$(plist_for "$job")"
-    log="$(log_for "$job")"
-    mkdir -p "$(dirname "$plist")" "$(dirname "$log")"
-    sed -e "s|__SCRIPT__|$(escape "$script")|g" -e "s|__LOG__|$(escape "$log")|g" \
-      -e "s|__PATH__|$(escape "$PATH")|g" "$plugin_dir/launchd/$job.plist" >"$plist"
-    plutil -lint -s "$plist"
+    # Install the commit or sync job for the current mode, removing the other
     remove_job "$other"
-    launchctl bootout "$domain/$(label_for "$job")" 2>/dev/null || true
-    launchctl bootstrap "$domain" "$plist"
-    echo "backlog-md-schedule: installed $plist ($schedule, log: $log)"
+    install_job "$job"
+    echo "backlog-md-schedule: installed $(plist_for "$job") ($schedule, log: $(log_for "$job"))"
+
+    # Install or remove the web board server
+    if [[ "$BROWSER_ENABLED" == true ]]; then
+      install_job backlog-md-browser
+      echo "backlog-md-schedule: installed $(plist_for backlog-md-browser) (http://localhost:$BROWSER_PORT, log: $(log_for backlog-md-browser))"
+    else
+      remove_job backlog-md-browser
+    fi
     ;;
 
   uninstall)
@@ -84,7 +97,7 @@ case "${1:-}" in
       else
         echo "not loaded"
       fi
-      [[ "$name" == "$job" ]] || echo "sync is $([[ "$SYNC_ENABLED" == true ]] && echo on || echo off); rerun install to switch jobs"
+      [[ "$name" == "$job" || "$name" == backlog-md-browser ]] || echo "sync is $([[ "$SYNC_ENABLED" == true ]] && echo on || echo off); rerun install to switch jobs"
       if [[ -f "$(log_for "$name")" ]]; then
         tail -n 5 "$(log_for "$name")"
       fi
