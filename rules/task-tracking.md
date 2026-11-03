@@ -58,3 +58,7 @@ Track any session that creates a branch or commit. Questions, reviews, and explo
 3. **When finishing**, set the task to Done with a one- or two-sentence final summary. If it's waiting on someone else, such as a pull request in review, move it to Waiting, add the pull request as a reference, and note who or what it's waiting on. If it's unfinished, leave it In Progress with a note on where it stopped.
 
 When I mention something non-code I need to do, such as replying to someone or filing paperwork, offer to add it as a To Do task. Label it (e.g. `errand` or `admin`), pass `--due-date YYYY-MM-DD` when it has a deadline, and attach any thread or document it relates to.
+
+### Assigning a Task to an Agent
+
+When I ask for work to be delegated, handed off, or assigned to an agent, use the `sidequest` skill. It writes the agent's brief into the task, then queues it, launches it, or hands me a prompt, as this machine's `delegation` setting says. A task's Implementation Plan starting with `Repo:` and `Branch:` lines is such a brief.
