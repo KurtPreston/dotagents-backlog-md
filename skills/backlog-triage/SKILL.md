@@ -171,60 +171,16 @@ Apply the decision before presenting the next task. Start every note with
 
 ## 5. Delegating
 
-When the user picks **a**, write a brief that an agent with no knowledge of
-this conversation can execute, and store it in the task so any agent or
-session can pick it up later:
-
-```sh
-BACKLOG_CWD=~/Code/tasks backlog task edit N -s "To Do" --add-label agent \
-  --plan $'…brief…' --append-notes "Triage …: delegated to an agent"
-```
-
-Queue it as the task-tracking rule's "Assigning a Task to an Agent" section
-describes: the brief must start with `Repo:` and `Branch:` lines, or the
-automation that runs queued tasks can't pick a checkout. After those lines,
-the brief says, briefly:
-
-- The goal and why it matters.
-- The repository and the files, pull requests, or threads to start from, as
-  links.
-- What you found during investigation, so the agent doesn't redo it.
-- What done looks like, such as a passing test or an opened pull request.
-- Limits: follow the repository's AGENTS.md and the task-tracking rule, work
-  on a new branch, and don't merge or post anything that needs the user's
-  approval.
+When the user picks **a**, follow the `sidequest` skill's steps 2 to 5 for
+this task: write its brief, then queue, launch, or hand it off as this
+machine's mode says, and sync. Use what you found during investigation in the
+brief, so the agent doesn't redo it, and append
+`Triage …: delegated to an agent` to the task's notes.
 
 If the task is ambiguous, risky, or needs a decision only the user can make,
 say so and recommend something else instead.
 
-Then launch it before presenting the next task. Delegated work runs in its
-own top-level agent thread, so the user can track it alongside their other
-agents. Show a direct link to the task, its folder (the repository or its
-grove worktree), and its prompt. Link the task's file, the `File:` path from
-`backlog task view`, as a markdown link with angle brackets around the path
-because it contains spaces. Keep the link outside the code block so it stays
-clickable:
-
-````
-**[TASK-7](</Users/me/Code/tasks/backlog/tasks/task-7 - Stop-sending-telemetry.md>)**: Local telemetry guard
-```
-Folder: ~/Code/app/main
-Prompt: Do TASK-7 from ~/Code/tasks; its Implementation Plan has the brief.
-```
-````
-
-- If you have a tool that creates a new agent thread, such as Zed's
-  `create_thread`, start the thread in that folder with that prompt, then
-  move on.
-- Otherwise, show the folder and prompt, end your turn, and wait for the
-  user to say they've started it before presenting the next task.
-
-The brief tells the agent to set the task In Progress when it starts, per
-the task-tracking rule.
-
-Don't use sub-agents (such as `spawn_agent`) for delegated tasks unless the
-user asks. They run nested inside the triage thread, where the user can't
-track them with their other agents.
+Show the one-line report, then move on to the next task.
 
 ## 6. The To Do pass
 

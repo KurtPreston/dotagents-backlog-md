@@ -20,4 +20,21 @@
     // The board's port on 127.0.0.1.
     "port": 6420,
   },
+
+  "delegation": {
+    // What /sidequest does once a task holds its agent brief:
+    //   "handoff": print the folder and a prompt for you to start an agent yourself
+    //   "launch":  start an agent now, in the background, by running `command`
+    //   "queue":   label the task for something that watches the board, such as docent, and stop
+    // Only "queue" adds the label, so a watcher never picks up a task already handed off another way.
+    "mode": "handoff",
+
+    // The label a board watcher looks for. Used only in "queue" mode.
+    "label": "agent",
+
+    // The agent CLI that "launch" mode runs, one argument per string. {prompt} becomes the prompt
+    // pointing the agent at the task, and {folder} the checkout it runs in. For Claude Code, use
+    // ["claude", "-p", "{prompt}", "--dangerously-skip-permissions"].
+    "command": ["copilot", "-p", "{prompt}", "--allow-all-tools"],
+  },
 }

@@ -3,8 +3,10 @@
 A dotagents plugin for tracking all my work, coding and otherwise, in one [Backlog.md](https://github.com/MrLesk/Backlog.md) task board at `~/Code/tasks`.
 
 - `rules/task-tracking.md` — tells agents when and how to update the board: before, during, and after any session that creates a branch or commit.
-- `skills/backlog-triage/` — a daily `/backlog-triage` pass that walks through every Waiting task with an agent, then optionally every To Do task. For each, the agent summarizes the remaining work and checks its state, and you decide, after talking it through if you need more context: close it as done, drop it, move it to To Do when the next step is yours, keep it waiting, delegate it to an agent, or mark it in progress when its pull request is already queued to merge. Delegated tasks carry their brief in the task, and the agent can launch them at the end.
+- `skills/backlog-triage/` — a daily `/backlog-triage` pass that walks through every Waiting task with an agent, then optionally every To Do task. For each, the agent summarizes the remaining work and checks its state, and you decide, after talking it through if you need more context: close it as done, drop it, move it to To Do when the next step is yours, keep it waiting, delegate it to an agent, or mark it in progress when its pull request is already queued to merge. Delegated tasks go through `/sidequest`.
 - `skills/task/` — `/task <number, name, or description>` picks up one task. The agent finds it, reads its context and checks its links, then acts on its column: proposes a plan for To Do and waits for approval; for In Progress, looks for a session already working on it, or works out where the work stopped; for Waiting, checks whether it's still blocked, looks for a way to unblock it, and suggests who to chase; for Done, confirms nothing's left.
+- `skills/sidequest/` — `/sidequest [--now | --queue | --handoff] [task or description]` hands work to an agent. It finds or creates the task, writes a self-contained brief into its Implementation Plan, then acts on this machine's [delegation mode](#delegating-to-agents).
+- `scripts/backlog-sidequest` — the script `/sidequest` uses to read the delegation mode, build the agent's prompt, and launch the configured agent CLI in the background with a log under `~/.local/state/backlog-md/sidequests/`.
 - `scripts/backlog-task-sessions` — `backlog-task-sessions TASK-N [--days N]` lists Copilot CLI, Claude Code, and Zed sessions from the last 14 days that mention a task, newest first, flagging running Copilot sessions as `live`. `/task` uses it to avoid starting work that another session already has in hand.
 - `scripts/backlog-md-commit` — commits the task list's changes, with a message that Copilot CLI writes from the day's diff. It falls back to a plain list of changed tasks if Copilot fails, and does nothing when there are no changes. `--dry-run` prints the message without committing. When sync is on, it leaves commits to `backlog-md-sync`.
 - `scripts/backlog-md-sync` — in [synced mode](#syncing-between-machines), commits each change with a plain message, then fetches, rebases, and pushes. `--pull` skips the push, and `setup` connects a machine's board to the remote. It does nothing when sync is off.
@@ -86,3 +88,13 @@ cp config.example.jsonc config.jsonc       # set sync.enabled to true and sync.r
 ```
 
 On each other machine, write the same `config.jsonc` and run the same two commands. When `BACKLOG_CWD` doesn't exist yet, `setup` clones the board there. `setup` won't merge two boards that already have separate histories. Move the second one aside first and let `setup` clone.
+
+## Delegating to agents
+
+`/sidequest` writes the same brief whichever way the agent gets started: an Implementation Plan that starts with `Repo: owner/name` and `Branch: name` lines, then the goal, starting points, what done looks like, and the agent's limits. Set `delegation.mode` in `config.jsonc` to choose what happens next on each machine:
+
+- `handoff` (the default) prints the folder and a prompt for you to start an agent yourself.
+- `launch` starts an agent right away by running `delegation.command`, such as `["copilot", "-p", "{prompt}", "--allow-all-tools"]`, detached in the repository's checkout.
+- `queue` adds the `delegation.label` label (default `agent`) and leaves the task in To Do for a program that watches the board, such as [docent](https://github.com/KurtPreston/docent)'s backlog work queue. Turn on sync so the watcher sees tasks you queue on another machine.
+
+Only `queue` adds the label, so a watcher never starts a second agent on a task that was launched or handed off. `/sidequest --now`, `--queue`, or `--handoff` overrides the mode for one task.

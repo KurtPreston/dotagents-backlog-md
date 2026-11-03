@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+// Helpers for the /sidequest skill, which hands a board task to an agent.
+// Reads the `delegation` settings from config.jsonc, builds the agent's prompt, and in launch mode
+// starts the configured agent CLI in the background with its output in a log file.
+//
+// Usage:
+//   backlog-sidequest mode                 print the configured mode and queue label
+//   backlog-sidequest prompt TASK-ID       print the prompt that starts an agent on the task
+//   backlog-sidequest launch TASK-ID DIR   start the configured agent command in DIR, detached
+//
+// BACKLOG_MD_CONFIG overrides the config path, for tests.
+import { mkdirSync, openSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+// Load the plugin's config reader from this script's real location, since ~/.agents/bin holds a symlink
+const pluginDir = join(dirname(realpathSync(fileURLToPath(import.meta.url))), "..");
+const { readConfig } = await import(join(pluginDir, "lib", "read-config.mjs"));
+
+const MODES = ["queue", "launch", "handoff"];
+const DEFAULT_COMMAND = ["copilot", "-p", "{prompt}", "--allow-all-tools"];
+
+// Stop with a message on stderr
+function fail(message) {
+  console.error(`backlog-sidequest: ${message}`);
+  process.exit(1);
+}
+
+// Resolve the delegation settings with their defaults, rejecting values the skill can't act on
+function delegationSettings() {
+  const delegation = readConfig(process.env.BACKLOG_MD_CONFIG).delegation ?? {};
+  const mode = delegation.mode ?? "handoff";
+  if (!MODES.includes(mode)) {
+    fail(`delegation.mode must be one of ${MODES.join(", ")}, not "${mode}"`);
+  }
+  const command = delegation.command ?? DEFAULT_COMMAND;
+  if (!Array.isArray(command) || command.length === 0 || !command.every((part) => typeof part === "string")) {
+    fail("delegation.command must be a non-empty array of strings");
+  }
+  return { mode, label: delegation.label || "agent", command };
+}
+
+// The prompt that points a fresh agent at the task's brief
+function promptFor(taskId) {
+  const board = process.env.BACKLOG_CWD || join(homedir(), "Code", "tasks");
+  return (
+    `Do ${taskId} from the Backlog.md board in ${board}. Its Implementation Plan is your brief: ` +
+    `its Repo: and Branch: lines name where to work. Follow the task-tracking rule: set the task ` +
+    `In Progress when you start, and when you stop, move it to Waiting, Done, or back to To Do with a note.`
+  );
+}
+
+// Start the configured command in folder, detached, logging to a per-task file
+function launch(taskId, folder) {
+  if (!statSync(folder, { throwIfNoEntry: false })?.isDirectory()) {
+    fail(`folder not found: ${folder}`);
+  }
+  const { command } = delegationSettings();
+  const prompt = promptFor(taskId);
+  const argv = command.map((part) => part.replaceAll("{prompt}", prompt).replaceAll("{folder}", folder));
+
+  // Send the agent's output to a timestamped log under the user's state directory
+  const stateHome = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+  const logDir = join(stateHome, "backlog-md", "sidequests");
+  mkdirSync(logDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
+  const logPath = join(logDir, `${taskId}-${stamp}.log`);
+  const log = openSync(logPath, "a");
+
+  // Detach so the agent outlives this script and the session that ran it
+  const child = spawn(argv[0], argv.slice(1), { cwd: folder, detached: true, stdio: ["ignore", log, log] });
+  child.on("error", (error) => fail(`can't start ${argv[0]}: ${error.message}`));
+  child.on("spawn", () => {
+    child.unref();
+    console.log(`pid: ${child.pid}`);
+    console.log(`log: ${logPath}`);
+  });
+}
+
+// Dispatch the subcommand
+const [subcommand, taskId, folder] = process.argv.slice(2);
+if (subcommand === "mode") {
+  const { mode, label } = delegationSettings();
+  console.log(`mode: ${mode}`);
+  console.log(`label: ${label}`);
+} else if (subcommand === "prompt" && taskId) {
+  console.log(promptFor(taskId));
+} else if (subcommand === "launch" && taskId && folder) {
+  launch(taskId, folder);
+} else {
+  fail("usage: backlog-sidequest mode | prompt TASK-ID | launch TASK-ID DIR");
+}

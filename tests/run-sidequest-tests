@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Exercise backlog-sidequest against temporary configs: mode defaults and validation, and that launch runs
+# the configured command detached in the folder with {prompt} and {folder} filled in.
+# Prints "ok" or "FAIL" per scenario; exits non-zero on any failure.
+# Usage: tests/run-sidequest-tests
+set -euo pipefail
+
+# Point the script at a temporary config and state directory
+plugin_dir="$(cd "$(dirname "$0")/.." && pwd)"
+sidequest="$plugin_dir/scripts/backlog-sidequest"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+export BACKLOG_MD_CONFIG="$work/config.jsonc" XDG_STATE_HOME="$work/state" BACKLOG_CWD="$work/board"
+failures=0
+
+# Record one scenario's result
+check() {
+  local name="$1"
+  shift
+  if "$@"; then
+    echo "ok   - $name"
+  else
+    echo "FAIL - $name"
+    failures=$((failures + 1))
+  fi
+}
+
+# A missing config means handoff mode with the default label
+rm -f "$BACKLOG_MD_CONFIG"
+check "defaults to handoff" test "$("$sidequest" mode)" = $'mode: handoff\nlabel: agent'
+
+# A configured mode and label are reported, with comments and trailing commas allowed
+printf '{ "delegation": { "mode": "queue", // watched by a runner\n "label": "bot", }, }\n' >"$BACKLOG_MD_CONFIG"
+check "reads mode and label" test "$("$sidequest" mode)" = $'mode: queue\nlabel: bot'
+
+# An unknown mode is rejected
+printf '{ "delegation": { "mode": "later" } }\n' >"$BACKLOG_MD_CONFIG"
+check "rejects unknown mode" bash -c "! '$sidequest' mode 2>/dev/null"
+
+# The prompt names the task and the board
+check "prompt names task and board" bash -c "'$sidequest' prompt TASK-9 | grep -q 'Do TASK-9 from the Backlog.md board in $work/board'"
+
+# Launch fills in the template and runs it in the folder
+mkdir -p "$work/repo"
+printf '{ "delegation": { "mode": "launch", "command": ["sh", "-c", "pwd > ran.txt; printf %%s \\"$1|$2\\" >> ran.txt", "x", "{prompt}", "{folder}"] } }\n' >"$BACKLOG_MD_CONFIG"
+"$sidequest" launch TASK-9 "$work/repo" >"$work/launch.out"
+for _ in $(seq 50); do
+  [ -s "$work/repo/ran.txt" ] && grep -q '|' "$work/repo/ran.txt" && break
+  sleep 0.1
+done
+check "launch runs in folder" test "$(head -1 "$work/repo/ran.txt")" = "$(cd "$work/repo" && pwd -P)"
+check "launch fills prompt and folder" grep -q "Do TASK-9 .*|$work/repo\$" "$work/repo/ran.txt"
+check "launch reports its log" grep -q "^log: $work/state/backlog-md/sidequests/TASK-9-" "$work/launch.out"
+
+# Launch refuses a folder that doesn't exist
+check "launch rejects missing folder" bash -c "! '$sidequest' launch TASK-9 '$work/nope' 2>/dev/null"
+
+[ "$failures" -eq 0 ] || exit 1
