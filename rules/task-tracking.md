@@ -58,3 +58,25 @@ Track any session that creates a branch or commit. Questions, reviews, and explo
 3. **When finishing**, set the task to Done with a one- or two-sentence final summary. If it's waiting on someone else, such as a pull request in review, move it to Waiting, add the pull request as a reference, and note who or what it's waiting on. If it's unfinished, leave it In Progress with a note on where it stopped.
 
 When I mention something non-code I need to do, such as replying to someone or filing paperwork, offer to add it as a To Do task. Label it (e.g. `errand` or `admin`), pass `--due-date YYYY-MM-DD` when it has a deadline, and attach any thread or document it relates to.
+
+### Assigning a Task to an Agent
+
+When I ask for a task to be assigned to an agent, or handed off for an agent to pick up later, queue it on the board. An automation watches the board and starts an agent on each queued task, one at a time. A task is queued when all of these hold:
+
+- It's in **To Do**.
+- It has the `agent` label.
+- It's ready: every task it depends on is Done.
+- Its Implementation Plan starts with `Repo:` and `Branch:` lines naming the repository, as `owner/name`, and the branch to work on. The automation reads them to pick the checkout.
+
+The rest of the plan is the agent's whole brief, since it starts with no knowledge of this conversation. Say briefly what the goal is and why, the files, pull requests, or threads to start from, what's already known, what done looks like, and its limits. Limits include following the repository's AGENTS.md, and not merging or posting anything that needs my approval.
+
+```sh
+BACKLOG_CWD=~/Code/tasks backlog task create "Rename legacy module" -s "To Do" -l app -l agent --dep TASK-7 --plan 'Repo: acme/app
+Branch: rename-legacy-module
+
+Goal: …' --plain
+```
+
+- If the work would conflict with something still in progress, such as an open pull request that touches the same files, pass `--dep` on that task so the agent waits for it.
+- Sync the board afterward so the automation sees the task.
+- If an agent fails, its task moves back to To Do with the `agent-failed` label in place of `agent`. To retry it, fix the plan and swap the label back.

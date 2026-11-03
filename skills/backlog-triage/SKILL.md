@@ -180,7 +180,10 @@ BACKLOG_CWD=~/Code/tasks backlog task edit N -s "To Do" --add-label agent \
   --plan $'…brief…' --append-notes "Triage …: delegated to an agent"
 ```
 
-The brief says, briefly:
+Queue it as the task-tracking rule's "Assigning a Task to an Agent" section
+describes: the brief must start with `Repo:` and `Branch:` lines, or the
+automation that runs queued tasks can't pick a checkout. After those lines,
+the brief says, briefly:
 
 - The goal and why it matters.
 - The repository and the files, pull requests, or threads to start from, as
