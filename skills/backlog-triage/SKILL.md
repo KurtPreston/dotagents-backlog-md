@@ -1,6 +1,6 @@
 ---
 name: backlog-triage
-description: Walk the user through every Waiting task on their Backlog.md board in ~/Code/tasks, then optionally their To Do tasks, one at a time, and decide each one's fate — close as done, drop, move to To Do, keep waiting, delegate to an agent, or mark in progress. Use when the user runs /backlog-triage or asks to triage, review, or clean up their board or what they're waiting on.
+description: Archive Done tasks from before this week, then walk the user through every Waiting task on their Backlog.md board in ~/Code/tasks and optionally their To Do tasks, one at a time, deciding each one's fate. Use when the user runs /backlog-triage or asks to triage, review, or clean up their board or what they're waiting on.
 ---
 
 # Backlog Triage
@@ -8,8 +8,8 @@ description: Walk the user through every Waiting task on their Backlog.md board 
 Waiting holds tasks whose next step belongs to someone else: pull requests in
 review, questions out to other people, work blocked on another task. Left
 alone, it fills with things that already came back or quietly stalled. This
-skill is a short daily pass that gives every Waiting task a decision, then
-offers the same pass over To Do.
+skill first archives older completions to keep Done focused on this week,
+then gives every Waiting task a decision and offers the same pass over To Do.
 
 Your job is to investigate and recommend, not to do the work. Don't fix,
 merge, or post anything during triage. The only work that starts is what the
@@ -21,6 +21,50 @@ Use the board in `~/Code/tasks`. Pass `BACKLOG_CWD=~/Code/tasks` on every
 loading the board, and `BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync`
 after applying each decision, as the task-tracking rule's Syncing section
 describes.
+
+## 0. Archive older Done tasks
+
+After syncing, clean up Done automatically, without asking for each task.
+This is a standing preference: Done shows this week's completions, while
+older work stays searchable in the archive.
+
+```sh
+BACKLOG_CWD=~/Code/tasks backlog task list -s Done --json
+```
+
+- Set the cutoff to Monday at 00:00 in the user's local timezone, using the
+  current date. Compare timezone-aware timestamps; this is a calendar week,
+  not a rolling seven days or Monday midnight UTC.
+- Archive only tasks currently in Done whose latest completion was strictly
+  before the cutoff. Keep completions at or after the cutoff, even if the
+  task was created weeks ago. Never age out To Do, In Progress, or Waiting.
+- Prefer a completion timestamp if available. The current CLI lists
+  `updatedAt` and `createdAt`, not a completion date: an `updatedAt` before
+  the cutoff establishes that a Done task was already complete. For a
+  recent update, inspect the task's notes and latest transition into Done
+  in the board's git history to distinguish completion from later edits.
+  Use the task timestamp recorded at that transition, not the commit time:
+  the nightly commit can record an earlier day's work.
+- If `updatedAt` is absent, use `createdAt` only when the record and history
+  show the task was created as Done. If completion timing remains missing
+  or ambiguous, retain the task and report it rather than guessing.
+- Recheck candidates before archiving so a reopened or newly completed task
+  is not removed. Do not edit notes first, which would change `updatedAt`.
+
+For each eligible task, then once for the completed batch:
+
+```sh
+BACKLOG_CWD=~/Code/tasks backlog task archive TASK-N
+BACKLOG_CWD=~/Code/tasks ~/.agents/bin/backlog-md-sync
+```
+
+Use `task archive`, not deletion or the interactive, age-based `cleanup`
+command. Records, IDs, and links are retained and `backlog task restore`
+can bring a task back. Reload Done to verify the result, and report the
+cutoff, archived count, and any uncertain tasks kept.
+
+If the user requested only cleanup, stop here; otherwise continue with
+Waiting even when there were no older Done tasks.
 
 ## 1. Load the Waiting column
 
@@ -209,6 +253,7 @@ still deciding blockers before the tasks that depend on them.
 
 Summarize the pass:
 
+- Older Done tasks archived, this week's cutoff, and any uncertain dates kept.
 - Counts per outcome, and one line per task with its decision.
 - What's left in Waiting, each with what it's waiting on.
 - Each delegated task, with its link, folder, and prompt in case a thread
