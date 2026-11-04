@@ -1,0 +1,297 @@
+#!/usr/bin/env node
+// List the agent sessions active in a period, so /weekly-review can see where the week's agent time went.
+// Reads Copilot CLI session state, Claude Code transcripts, and Zed threads, and prints one tab-separated
+// line per session, oldest first, with a header:
+//   agent  client  started  last-activity  prompts  folder  tasks  title  id
+// `client` is the app a Copilot session ran in, such as cli or zed. `tasks` lists the board tasks the user
+// named or the agent edited or viewed with `backlog task`.
+//
+// Usage:
+//   backlog-agent-sessions [--since YYYY-MM-DD | --days N]   list sessions (default: the last 7 days)
+//   backlog-agent-sessions prompts ID [--chars N]            print one session's user prompts (default 400 chars each)
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+
+const HOME = homedir();
+const COPILOT_DIR = join(HOME, ".copilot", "session-state");
+const CLAUDE_DIR = join(HOME, ".claude", "projects");
+const ZED_DB = join(HOME, "Library", "Application Support", "Zed", "threads", "threads.db");
+
+// Stop with a message on stderr
+function fail(message) {
+  console.error(`backlog-agent-sessions: ${message}`);
+  process.exit(2);
+}
+
+// Read a JSONL file into objects, skipping lines that don't parse
+function readJsonl(path) {
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
+}
+
+// Collect board task IDs the user named or the agent touched with `backlog task edit|view|archive`.
+// Only prompts and tool-call arguments count, since instructions quote example commands
+function findTasks(prompts, toolCalls) {
+  const ids = new Set();
+  for (const text of prompts) {
+    for (const match of text.matchAll(/\bTASK-(\d+)\b/gi)) {
+      ids.add(Number(match[1]));
+    }
+  }
+  for (const match of toolCalls.matchAll(/backlog task (?:edit|view|archive)\s+(?:TASK-)?(\d+)\b/gi)) {
+    ids.add(Number(match[1]));
+  }
+  return [...ids].sort((a, b) => a - b).map((n) => `TASK-${n}`);
+}
+
+// Read a value from a flat YAML file, including `|-` block scalars
+function yamlValue(text, key) {
+  const lines = text.split("\n");
+  const index = lines.findIndex((line) => line.startsWith(`${key}:`));
+  if (index < 0) {
+    return "";
+  }
+  const value = lines[index].slice(key.length + 1).trim();
+  return /^[|>]/.test(value) ? (lines[index + 1] ?? "").trim() : value.replace(/^"|"$/g, "");
+}
+
+// Copilot CLI: each session folder holds events.jsonl and workspace.yaml
+function copilotSessions(sinceMs) {
+  if (!existsSync(COPILOT_DIR)) {
+    return [];
+  }
+  return readdirSync(COPILOT_DIR).flatMap((id) => {
+    const events = join(COPILOT_DIR, id, "events.jsonl");
+    if (!existsSync(events) || statSync(events).mtimeMs < sinceMs) {
+      return [];
+    }
+
+    // Pull the user's prompts and the session's time span from the event log
+    const records = readJsonl(events);
+    const prompts = records
+      .filter((r) => r.type === "user.message" && typeof r.data?.content === "string")
+      .map((r) => ({ time: r.timestamp, text: r.data.content }));
+    const times = records.map((r) => Date.parse(r.timestamp)).filter(Number.isFinite);
+    const toolCalls = records
+      .filter((r) => r.type === "tool.execution_start")
+      .map((r) => JSON.stringify(r.data?.arguments ?? ""))
+      .join("\n");
+
+    // Folder, title, and client app come from the workspace file
+    const workspacePath = join(COPILOT_DIR, id, "workspace.yaml");
+    const workspace = existsSync(workspacePath) ? readFileSync(workspacePath, "utf8") : "";
+    return [{
+      agent: "copilot",
+      client: yamlValue(workspace, "client_name") || "cli",
+      started: Math.min(...times),
+      last: Math.max(...times),
+      folder: yamlValue(workspace, "cwd"),
+      title: yamlValue(workspace, "name") || prompts[0]?.text || "",
+      id,
+      prompts,
+      tasks: findTasks(prompts.map((p) => p.text), toolCalls),
+    }];
+  });
+}
+
+// Find Claude Code transcripts, one per session, under ~/.claude/projects/<encoded-folder>/
+function claudeFiles() {
+  if (!existsSync(CLAUDE_DIR)) {
+    return [];
+  }
+  return readdirSync(CLAUDE_DIR).flatMap((project) => {
+    const dir = join(CLAUDE_DIR, project);
+    if (!statSync(dir).isDirectory()) {
+      return [];
+    }
+    return readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
+  });
+}
+
+// Claude Code: user turns are typed prompts, unless they carry tool results or are meta notices
+function claudeSessions(sinceMs) {
+  return claudeFiles().flatMap((file) => {
+    if (statSync(file).mtimeMs < sinceMs) {
+      return [];
+    }
+    const records = readJsonl(file);
+
+    // Keep prompts written by the user, as text or text blocks
+    const prompts = records
+      .filter((r) => r.type === "user" && !r.isMeta)
+      .flatMap((r) => {
+        const content = r.message?.content;
+        const text = typeof content === "string"
+          ? content
+          : Array.isArray(content) && content.every((c) => c.type === "text")
+            ? content.map((c) => c.text).join("\n")
+            : "";
+        return text ? [{ time: r.timestamp, text }] : [];
+      });
+    const times = records.map((r) => Date.parse(r.timestamp)).filter(Number.isFinite);
+    const toolCalls = records
+      .filter((r) => r.type === "assistant" && Array.isArray(r.message?.content))
+      .flatMap((r) => r.message.content.filter((c) => c.type === "tool_use").map((c) => JSON.stringify(c.input)))
+      .join("\n");
+    if (times.length === 0) {
+      return [];
+    }
+
+    // Folder and title come from the first record that has them
+    return [{
+      agent: "claude",
+      client: "claude",
+      started: Math.min(...times),
+      last: Math.max(...times),
+      folder: records.find((r) => r.cwd)?.cwd ?? "",
+      title: records.find((r) => r.type === "summary")?.summary || prompts[0]?.text || "",
+      id: file.split("/").pop().replace(/\.jsonl$/, ""),
+      prompts,
+      tasks: findTasks(prompts.map((p) => p.text), toolCalls),
+    }];
+  });
+}
+
+// Run sqlite3 against Zed's thread store, read-only, returning tab-separated rows
+function zedQuery(sql) {
+  const out = execFileSync("sqlite3", ["-readonly", "-separator", "\t", ZED_DB, sql], {
+    encoding: "utf8",
+    maxBuffer: 1 << 30,
+  });
+  return out.split("\n").filter(Boolean).map((line) => line.split("\t"));
+}
+
+// Decode one Zed thread's data column, which is usually zstd-compressed JSON
+function zedThread(type, hex) {
+  const bytes = Buffer.from(hex, "hex");
+  const json = type === "zstd" ? execFileSync("zstd", ["-dq"], { input: bytes, maxBuffer: 1 << 30 }) : bytes;
+  return json.toString("utf8");
+}
+
+// Zed: threads live in a SQLite table, with user messages made of Text and Mention parts
+function zedSessions(sinceMs) {
+  if (!existsSync(ZED_DB)) {
+    return [];
+  }
+  const since = Math.floor(sinceMs / 1000);
+  const rows = zedQuery(`select id, cast(strftime('%s', ifnull(created_at, updated_at)) as int),
+    cast(strftime('%s', updated_at) as int), replace(ifnull(folder_paths, ''), char(10), ' '),
+    replace(replace(summary, char(9), ' '), char(10), ' '), data_type, hex(data) from threads
+    where strftime('%s', updated_at) >= '${since}'`);
+  return rows.flatMap(([id, created, updated, folder, title, type, hex]) => {
+    let raw;
+    try {
+      raw = zedThread(type, hex);
+    } catch {
+      return [];
+    }
+
+    // Join each user message's text parts into one prompt; Zed keeps no per-message times
+    const thread = JSON.parse(raw);
+    const prompts = (thread.messages ?? [])
+      .filter((m) => m.User)
+      .map((m) => ({
+        time: "",
+        text: (m.User.content ?? []).map((c) => c.Text ?? "").join("").trim(),
+      }))
+      .filter((p) => p.text);
+    const toolCalls = (thread.messages ?? [])
+      .flatMap((m) => m.Agent?.content ?? [])
+      .filter((c) => c.ToolUse)
+      .map((c) => JSON.stringify(c.ToolUse.input ?? ""))
+      .join("\n");
+    return [{
+      agent: "zed",
+      client: "zed",
+      started: Number(created) * 1000,
+      last: Number(updated) * 1000,
+      folder,
+      title: title || prompts[0]?.text || "",
+      id,
+      prompts,
+      tasks: findTasks(prompts.map((p) => p.text), toolCalls),
+    }];
+  });
+}
+
+// Gather every source, skipping one that fails so the others still report
+function allSessions(sinceMs) {
+  return [copilotSessions, claudeSessions, zedSessions].flatMap((source) => {
+    try {
+      return source(sinceMs);
+    } catch (error) {
+      console.error(`backlog-agent-sessions: skipped ${source.name}: ${error.message}`);
+      return [];
+    }
+  });
+}
+
+// Format an epoch time as local YYYY-MM-DD HH:MM
+function localTime(ms) {
+  if (!Number.isFinite(ms)) {
+    return "-";
+  }
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Flatten text to one tab-free line of at most `max` characters
+function oneLine(text, max) {
+  const flat = String(text).replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+// Print the sessions active since the start of the period, oldest first
+function list(args) {
+  let sinceMs = Date.now() - 7 * 86400000;
+  if (args[0] === "--since" && /^\d{4}-\d{2}-\d{2}$/.test(args[1] ?? "")) {
+    sinceMs = new Date(`${args[1]}T00:00:00`).getTime();
+  } else if (args[0] === "--days" && /^\d+$/.test(args[1] ?? "")) {
+    sinceMs = Date.now() - Number(args[1]) * 86400000;
+  } else if (args.length > 0) {
+    fail("usage: backlog-agent-sessions [--since YYYY-MM-DD | --days N]");
+  }
+  const sessions = allSessions(sinceMs)
+    .filter((s) => s.last >= sinceMs)
+    .sort((a, b) => a.started - b.started);
+  console.log(["agent", "client", "started", "last-activity", "prompts", "folder", "tasks", "title", "id"].join("\t"));
+  for (const s of sessions) {
+    console.log([s.agent, s.client, localTime(s.started), localTime(s.last), s.prompts.length,
+      s.folder || "-", s.tasks.join(",") || "-", oneLine(s.title, 80) || "-", s.id].join("\t"));
+  }
+}
+
+// Print one session's prompts in order, each trimmed to a length
+function prompts(args) {
+  const [id, flag, chars] = args;
+  if (!id || (flag && (flag !== "--chars" || !/^\d+$/.test(chars ?? "")))) {
+    fail("usage: backlog-agent-sessions prompts ID [--chars N]");
+  }
+  const session = allSessions(0).find((s) => s.id === id);
+  if (!session) {
+    fail(`no session ${id}`);
+  }
+  const max = chars ? Number(chars) : 400;
+  session.prompts.forEach((p, i) => {
+    const time = p.time ? ` ${localTime(Date.parse(p.time))}` : "";
+    console.log(`[${i + 1}${time}] ${oneLine(p.text, max)}`);
+  });
+}
+
+const [command, ...rest] = process.argv.slice(2);
+if (command === "prompts") {
+  prompts(rest);
+} else {
+  list(command === undefined ? [] : [command, ...rest]);
+}
