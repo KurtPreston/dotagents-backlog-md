@@ -143,15 +143,22 @@ to find what to change, not to grade the user.
 
 - **What got done?** Group by theme. Separate what shipped from what was
   only started.
-- **Did it follow priorities?** Compare what got done with the high-priority
-  tasks, the last review's focus, daily plans, and the planning tools.
-  Estimate how much of the week went to planned work, to reactive work such
-  as incidents and requests, and to tooling.
+- **Did it follow priorities?** Judge the week against the user's own
+  priority order, if their instructions state one, rather than a default
+  that ranks board tasks above everything else. For example, someone may
+  rank on-call, unblocking teammates, or fixing their workflow when it gets
+  in the way above high-priority tasks; time spent on those is then the
+  plan working, not a distraction. Estimate how much of the week went to
+  each priority, and compare what got done with the high-priority tasks,
+  the last review's focus, daily plans, and the planning tools. Flag work
+  that ran ahead of a higher priority, such as tooling no problem called for
+  while a teammate waited on a review.
 - **What moved fast, and why?** Find what the quick items had in common,
   such as a clear scope, a skill that covered the workflow, or a responsive
   reviewer.
 - **What got stuck, and why?** For each stalled item, name the bottleneck
-  and its kind:
+  and its kind. Before calling it an attention problem, check whether
+  higher priorities in the user's order took the time.
   - *Technical:* builds, flaky tests, broken tools, access, slow systems.
   - *Social:* review latency, unanswered questions, unclear ownership,
     decisions waiting on someone.
@@ -216,7 +223,7 @@ Shape it like this:
 - <item> — <bottleneck> (<kind>): <evidence>
 
 ## Priorities vs. actual
-<planned, reactive, and tooling shares; what slipped and why>
+<share of the week per priority, in the user's order; what slipped, and whether a higher priority or something else displaced it>
 
 ## Recommendations
 ### Tooling
