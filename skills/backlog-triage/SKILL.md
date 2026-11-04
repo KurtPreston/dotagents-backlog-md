@@ -1,6 +1,6 @@
 ---
 name: backlog-triage
-description: Archive Done tasks from before this week, then walk the user through every Waiting task on their Backlog.md board in ~/Code/tasks and optionally their To Do tasks, one at a time, deciding each one's fate. Use when the user runs /backlog-triage or asks to triage, review, or clean up their board or what they're waiting on.
+description: Archive Done tasks from before this week, raise high-priority tasks untouched for 3+ days, then walk the user through every Waiting task on their Backlog.md board in ~/Code/tasks and optionally their To Do tasks, one at a time, deciding each one's fate. Use when the user runs /backlog-triage or asks to triage, review, or clean up their board or what they're waiting on.
 ---
 
 # Backlog Triage
@@ -9,7 +9,8 @@ Waiting holds tasks whose next step belongs to someone else: pull requests in
 review, questions out to other people, work blocked on another task. Left
 alone, it fills with things that already came back or quietly stalled. This
 skill first archives older completions to keep Done focused on this week,
-then gives every Waiting task a decision and offers the same pass over To Do.
+then raises high-priority work that hasn't moved in days, gives every Waiting
+task a decision, and offers the same pass over To Do.
 
 Your job is to investigate and recommend, not to do the work. Don't fix,
 merge, or post anything during triage. The only work that starts is what the
@@ -64,9 +65,65 @@ can bring a task back. Reload Done to verify the result, and report the
 cutoff, archived count, and any uncertain tasks kept.
 
 If the user requested only cleanup, stop here; otherwise continue with
-Waiting even when there were no older Done tasks.
+stale high-priority tasks even when there were no older Done tasks.
 
-## 1. Load the Waiting column
+## 1. Raise stale high-priority tasks
+
+High-priority work can go untouched for days while triage covers Waiting
+and the day fills with smaller things. Raise it first, so each one gets a
+deliberate decision.
+
+```sh
+BACKLOG_CWD=~/Code/tasks backlog task list -s "To Do" --json
+BACKLOG_CWD=~/Code/tasks backlog task list -s "In Progress" --json
+git -C ~/Code/tasks log --since="3 days ago" --format='%ad %s' --date=short -- backlog/tasks
+~/.agents/bin/backlog-task-sessions TASK-N --days 3
+```
+
+A task is stale when its priority is `high`, it's in To Do or In Progress,
+and nothing has moved it in the last 3 days. Triage, standup, and weekly
+reviews write notes on many tasks and mention their IDs in many sessions, so
+`updatedAt`, a bare `updated` commit, or a session that only mentions the ID
+isn't evidence. Count a task as moved only if, in the last 3 days, it has:
+
+- a status change in the board's git log, such as `TASK-6 Fix-login: To Do
+  → In Progress`;
+- a note or final summary about progress, other than ones starting
+  `Triage`, or from a standup or review;
+- commits on its pull request or branch; or
+- a session in a repository folder, not the board or a notes folder, whose
+  prompts worked on it. Confirm with
+  `~/.agents/bin/backlog-agent-sessions prompts SESSION-ID`.
+
+Waiting tasks are left to the Waiting pass, since their next step isn't the
+user's. If none are stale, say so in one line and continue.
+
+Investigate each stale task as in [Investigate before
+asking](#3-investigate-before-asking), then present it in the same format
+as the Waiting pass, adding how many days it's been untouched and why it's
+stuck if the evidence shows it, such as a draft pull request with a failing
+check. Ask the question directly: work it today, delegate it, or lower its
+priority?
+
+```
+n now · a agent · v lower priority · l later · d done · x drop · t talk
+```
+
+| Choice | Meaning | Commands |
+| --- | --- | --- |
+| **n** now | The user works it today | `task edit N --due-date TODAY --append-notes "Triage …: working today — <first step>"` |
+| **v** lower priority | It isn't really high priority | `task edit N --priority medium --append-notes "Triage …: lowered — <reason>"` |
+| **l** later | Still high priority, but blocked for a known reason | `task edit N --append-notes "Triage …: stale, kept — <blocker and when to revisit>"` |
+
+**a**, **d**, **x**, and **t** work as in the Waiting pass. Recommend **n**
+for the one or two most important tasks, not all of them, since a day only
+holds so much. Recommend **v** when nothing depends on the task soon, and
+**a** when an agent could take the next step alone. A task kept stale
+through two or more earlier triages should get a decision other than **l**.
+
+Tasks decided here are skipped in the To Do pass.
+
+## 2. Load the Waiting column
 
 ```sh
 BACKLOG_CWD=~/Code/tasks backlog task list -s Waiting --json
@@ -74,12 +131,12 @@ BACKLOG_CWD=~/Code/tasks backlog task view TASK-N --plain
 ```
 
 View every task in full. If the column is empty, say so and go to
-[the To Do pass](#6-the-to-do-pass).
+[the To Do pass](#7-the-to-do-pass).
 
 Order them oldest first (lowest ID), except that a task comes before any
 task in the pass that depends on it, so blockers are decided first.
 
-## 2. Investigate before asking
+## 3. Investigate before asking
 
 Before presenting the first task, check every task's current state with
 read-only lookups, in parallel where you can. Follow each task's references
@@ -127,7 +184,7 @@ gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){
   its requirements pass. Say which requirements are still outstanding, such
   as a pending check, an out-of-date branch, or a missing required review.
 
-## 3. Walk through the tasks one at a time
+## 4. Walk through the tasks one at a time
 
 Show a running count, then one task per message:
 
@@ -180,7 +237,7 @@ without the user's input, recommend **t** and say what you need to know.
 If several tasks are clearly done, such as their pull requests merged, you
 may present them together first and close them on one confirmation.
 
-## 4. Apply each decision right away
+## 5. Apply each decision right away
 
 Apply the decision before presenting the next task. Start every note with
 `Triage YYYY-MM-DD:` using today's date.
@@ -191,7 +248,7 @@ Apply the decision before presenting the next task. Start every note with
 | **x** drop | Not worth doing | `task edit N --append-notes "Triage …: dropped — <reason>"`, then `task archive N` |
 | **l** later | The next step is the user's, not now | `task edit N -s "To Do" --append-notes "Triage …: <next step and why it's the user's>"` |
 | **w** waiting | The next step is someone else's | `task edit N -s Waiting --append-notes "Triage …: waiting on <who/what>"` |
-| **a** agent | Delegate to an agent | See [Delegating](#5-delegating) |
+| **a** agent | Delegate to an agent | See [Delegating](#6-delegating) |
 | **p** in progress | Already landing | `task edit N -s "In Progress" --append-notes "Triage …: <landing state> — <what's left after it lands>"` |
 
 - With any decision except drop, add the links the task was missing in the
@@ -213,7 +270,7 @@ Apply the decision before presenting the next task. Start every note with
 - Archiving keeps the task's record and ID, so dropping is reversible with
   `backlog task restore`.
 
-## 5. Delegating
+## 6. Delegating
 
 When the user picks **a**, follow the `sidequest` skill's steps 2 to 5 for
 this task: write its brief, then queue, launch, or hand it off as this
@@ -226,7 +283,7 @@ say so and recommend something else instead.
 
 Show the one-line report, then move on to the next task.
 
-## 6. The To Do pass
+## 7. The To Do pass
 
 After the last Waiting task, show how many tasks are in To Do and ask whether
 to go through them too. If the user declines, go to the wrap-up.
@@ -249,11 +306,13 @@ still deciding blockers before the tasks that depend on them.
 - Recommend **a** for self-contained tasks an agent could finish without the
   user's input.
 
-## 7. Wrap up
+## 8. Wrap up
 
 Summarize the pass:
 
 - Older Done tasks archived, this week's cutoff, and any uncertain dates kept.
+- Each stale high-priority task and its decision, with the ones to work today
+  first.
 - Counts per outcome, and one line per task with its decision.
 - What's left in Waiting, each with what it's waiting on.
 - Each delegated task, with its link, folder, and prompt in case a thread
