@@ -80,9 +80,14 @@ The first lists every Copilot CLI, Claude Code, and Zed session active in the
 period: its client app, time span, number of prompts, folder, and the tasks
 it named or touched. The second prints one session's prompts in order.
 
-- Tally sessions and prompts by folder and by client. Prompts are a rough
-  measure of the user's attention; a session's time span isn't, since
-  sessions sit open for days.
+- Tally sessions and prompts by project and by client. Prompts in the
+  period are a rough measure of the user's attention, though short replies
+  such as "yes" or a one-letter triage choice count the same as a long
+  brief. A session's time span isn't a measure, since sessions sit open for
+  days.
+- Attribute sessions by folder, but for a general-purpose folder, such as a
+  notes folder where the user runs triage and standups, use the tasks
+  column and the prompts instead.
 - Sessions from a non-interactive client, such as a nightly job's `cli`
   session in the board's folder, are automations. Count them apart.
 - Read the prompts of the sessions with the most prompts, and of any task

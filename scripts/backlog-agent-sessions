@@ -3,7 +3,8 @@
 // Reads Copilot CLI session state, Claude Code transcripts, and Zed threads, and prints one tab-separated
 // line per session, oldest first, with a header:
 //   agent  client  started  last-activity  prompts  folder  tasks  title  id
-// `client` is the app a Copilot session ran in, such as cli or zed. `tasks` lists the board tasks the user
+// `client` is the app a Copilot session ran in, such as cli or zed. `prompts` counts the user's prompts in the
+// period, or all of a Zed thread's, since Zed doesn't time them. `tasks` lists the board tasks the user
 // named or the agent edited or viewed with `backlog task`.
 //
 // Usage:
@@ -267,7 +268,8 @@ function list(args) {
     .sort((a, b) => a.started - b.started);
   console.log(["agent", "client", "started", "last-activity", "prompts", "folder", "tasks", "title", "id"].join("\t"));
   for (const s of sessions) {
-    console.log([s.agent, s.client, localTime(s.started), localTime(s.last), s.prompts.length,
+    const inPeriod = s.prompts.filter((p) => !p.time || Date.parse(p.time) >= sinceMs).length;
+    console.log([s.agent, s.client, localTime(s.started), localTime(s.last), inPeriod,
       s.folder || "-", s.tasks.join(",") || "-", oneLine(s.title, 80) || "-", s.id].join("\t"));
   }
 }

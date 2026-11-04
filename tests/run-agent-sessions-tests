@@ -30,6 +30,7 @@ cop="$HOME/.copilot/session-state/cop-1"
 mkdir -p "$cop"
 printf 'id: cop-1\ncwd: /src/app\nclient_name: zed\nname: |-\n  Fix the login bug\n' >"$cop/workspace.yaml"
 cat >"$cop/events.jsonl" <<'EOF'
+{"type":"user.message","timestamp":"2026-10-20T17:00:00Z","data":{"content":"An old prompt from before the period"}}
 {"type":"system.message","timestamp":"2026-11-02T17:00:00Z","data":{"content":"Example: backlog task edit TASK-7 -s Done"}}
 {"type":"user.message","timestamp":"2026-11-02T17:00:01Z","data":{"content":"Pick up TASK-12 please"}}
 {"type":"tool.execution_start","timestamp":"2026-11-02T17:01:00Z","data":{"arguments":{"command":"backlog task edit 13 -s Done"}}}
@@ -69,7 +70,7 @@ check "drops sessions before the period" bash -c "! grep -q zed-old <<<'$out'"
 
 # Clients, prompt counts, folders, and titles are read per source
 check "reads the Copilot client" test "$(row cop-1 2)" = zed
-check "counts typed prompts only" test "$(row cop-1 5) $(row cl-1 5) $(row zed-1 5)" = "2 1 1"
+check "counts typed prompts in the period only" test "$(row cop-1 5) $(row cl-1 5) $(row zed-1 5)" = "2 1 1"
 check "reads folders" test "$(row cop-1 6) $(row cl-1 6) $(row zed-1 6)" = "/src/app /src/api /src/docs"
 check "reads titles" test "$(row cop-1 8)|$(row cl-1 8)|$(row zed-1 8)" = "Fix the login bug|Add rate limiting|Docs pass"
 
@@ -80,8 +81,8 @@ check "finds Zed tasks" test "$(row zed-1 7)" = "TASK-30,TASK-31"
 
 # prompts prints a session's prompts in order, trimmed to the requested length
 prompts="$("$sessions" prompts cop-1 --chars 10)"
-check "prints prompts in order" test "$(cut -d ' ' -f 1 <<<"$prompts" | tr '\n' ' ')" = "[1 [2 "
-check "trims prompts" test "$(sed -n 2p <<<"$prompts" | sed 's/^.*] //')" = "No, that'…"
+check "prints all prompts in order" test "$(cut -d ' ' -f 1 <<<"$prompts" | tr '\n' ' ')" = "[1 [2 [3 "
+check "trims prompts" test "$(sed -n 3p <<<"$prompts" | sed 's/^.*] //')" = "No, that'…"
 check "rejects an unknown session" bash -c "! '$sessions' prompts nope 2>/dev/null"
 check "rejects bad arguments" bash -c "! '$sessions' --since yesterday 2>/dev/null"
 
