@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Exercise backlog-agent-sessions against fixture sessions for Copilot CLI, Claude Code, and Zed in a temporary
+# HOME: listing, prompt counts, task detection from prompts and tool calls only, the period filter, and prompts.
+# Prints "ok" or "FAIL" per scenario; exits non-zero on any failure.
+# Usage: tests/run-agent-sessions-tests
+set -euo pipefail
+
+# Point the script at a temporary HOME
+plugin_dir="$(cd "$(dirname "$0")/.." && pwd)"
+sessions="$plugin_dir/scripts/backlog-agent-sessions"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+export HOME="$work"
+failures=0
+
+# Record one scenario's result
+check() {
+  local name="$1"
+  shift
+  if "$@"; then
+    echo "ok   - $name"
+  else
+    echo "FAIL - $name"
+    failures=$((failures + 1))
+  fi
+}
+
+# Copilot fixture: instructions quote an example task command, which must not count as a touched task
+cop="$HOME/.copilot/session-state/cop-1"
+mkdir -p "$cop"
+printf 'id: cop-1\ncwd: /src/app\nclient_name: zed\nname: |-\n  Fix the login bug\n' >"$cop/workspace.yaml"
+cat >"$cop/events.jsonl" <<'EOF'
+{"type":"user.message","timestamp":"2026-10-20T17:00:00Z","data":{"content":"An old prompt from before the period"}}
+{"type":"system.message","timestamp":"2026-11-02T17:00:00Z","data":{"content":"Example: backlog task edit TASK-7 -s Done"}}
+{"type":"user.message","timestamp":"2026-11-02T17:00:01Z","data":{"content":"Pick up TASK-12 please"}}
+{"type":"tool.execution_start","timestamp":"2026-11-02T17:01:00Z","data":{"arguments":{"command":"backlog task edit 13 -s Done"}}}
+{"type":"user.message","timestamp":"2026-11-02T18:30:00Z","data":{"content":"No, that's the wrong file"}}
+EOF
+
+# Claude fixture: a tool result and a meta notice are not prompts
+mkdir -p "$HOME/.claude/projects/-src-api"
+cat >"$HOME/.claude/projects/-src-api/cl-1.jsonl" <<'EOF'
+{"type":"summary","summary":"Add rate limiting"}
+{"type":"user","timestamp":"2026-11-03T16:00:00Z","cwd":"/src/api","message":{"content":"Add rate limiting"}}
+{"type":"user","timestamp":"2026-11-03T16:00:05Z","isMeta":true,"message":{"content":"Caveat"}}
+{"type":"assistant","timestamp":"2026-11-03T16:01:00Z","message":{"content":[{"type":"tool_use","input":{"command":"backlog task view TASK-20 --plain"}}]}}
+{"type":"user","timestamp":"2026-11-03T16:01:05Z","message":{"content":[{"type":"tool_result","content":"ok"}]}}
+EOF
+
+# Zed fixture: one thread stored as plain JSON, one old enough to fall outside the period
+zed="$HOME/Library/Application Support/Zed/threads"
+mkdir -p "$zed"
+thread='{"messages":[{"User":{"content":[{"Text":"Write the TASK-30 docs"}]}},{"Agent":{"content":[{"ToolUse":{"input":{"command":"backlog task edit TASK-31 -s Done"}}}]}}]}'
+sqlite3 "$zed/threads.db" "create table threads (id text primary key, summary text not null, updated_at text not null,
+  data_type text not null, data blob not null, parent_id text, folder_paths text, folder_paths_order text, created_at text);
+  insert into threads values ('zed-1', 'Docs pass', '2026-11-04T18:00:00Z', 'json', cast('$thread' as blob), null, '/src/docs', null, '2026-11-04T17:00:00Z');
+  insert into threads values ('zed-old', 'Old', '2026-10-01T18:00:00Z', 'json', cast('$thread' as blob), null, '/src/old', null, '2026-10-01T17:00:00Z');"
+
+# File times decide which Copilot and Claude sessions are read, so date them inside the period
+touch -t 202611021800 "$cop/events.jsonl"
+touch -t 202611031600 "$HOME/.claude/projects/-src-api/cl-1.jsonl"
+
+out="$("$sessions" --since 2026-11-01)"
+row() { grep -F "$1" <<<"$out" | cut -f "$2"; }
+
+# Each source is listed once, oldest first, under a header
+check "prints a header" test "$(head -n 1 <<<"$out" | cut -f 1)" = agent
+check "lists sessions oldest first" test "$(tail -n +2 <<<"$out" | cut -f 1 | tr '\n' ' ')" = "copilot claude zed "
+check "drops sessions before the period" bash -c "! grep -q zed-old <<<'$out'"
+
+# Clients, prompt counts, folders, and titles are read per source
+check "reads the Copilot client" test "$(row cop-1 2)" = zed
+check "counts typed prompts in the period only" test "$(row cop-1 5) $(row cl-1 5) $(row zed-1 5)" = "2 1 1"
+check "reads folders" test "$(row cop-1 6) $(row cl-1 6) $(row zed-1 6)" = "/src/app /src/api /src/docs"
+check "reads titles" test "$(row cop-1 8)|$(row cl-1 8)|$(row zed-1 8)" = "Fix the login bug|Add rate limiting|Docs pass"
+
+# Tasks come from prompts and tool calls, never from quoted instructions
+check "finds Copilot tasks" test "$(row cop-1 7)" = "TASK-12,TASK-13"
+check "finds Claude tasks" test "$(row cl-1 7)" = "TASK-20"
+check "finds Zed tasks" test "$(row zed-1 7)" = "TASK-30,TASK-31"
+
+# prompts prints a session's prompts in order, trimmed to the requested length
+prompts="$("$sessions" prompts cop-1 --chars 10)"
+check "prints all prompts in order" test "$(cut -d ' ' -f 1 <<<"$prompts" | tr '\n' ' ')" = "[1 [2 [3 "
+check "trims prompts" test "$(sed -n 3p <<<"$prompts" | sed 's/^.*] //')" = "No, that'…"
+check "rejects an unknown session" bash -c "! '$sessions' prompts nope 2>/dev/null"
+check "rejects bad arguments" bash -c "! '$sessions' --since yesterday 2>/dev/null"
+
+if ((failures > 0)); then
+  echo "$failures failed"
+  exit 1
+fi
+echo "all passed"
