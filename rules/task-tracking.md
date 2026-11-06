@@ -19,12 +19,13 @@ BACKLOG_CWD=~/Code/tasks backlog task edit TASK-7 -s Done --final-summary "Added
 - Never `git commit` in `~/Code/tasks` by hand. Scripts commit it, as described under Syncing.
 - If a sandbox blocks writing to `~/Code/tasks`, ask me for access rather than skipping the update.
 
-### Keeping Tasks Private
+### Keeping Backlog.md Tasks Private
 
-The board is my private tracker. No one else can see it, so its task IDs and titles mean nothing to them. Keep tasks out of anything other people read: pull request titles and descriptions, commit messages, branch names, code comments, review replies, issues, and messages.
+My Backlog.md board is a private tracker that no one else can see, so its task IDs, such as `TASK-147`, and task titles mean nothing to anyone else. Never mention a Backlog.md task in anything other people read: pull request titles and descriptions, commit messages, branch names, code comments, review replies, issues, and messages.
 
 - Describe the work itself instead, and link the issue, ticket, or thread it came from if there is one.
-- Links go one way: a task references its pull requests, never the reverse.
+- Adding a pull request's URL to its Backlog.md task is fine, since only I read the board. The pull request itself must never name the Backlog.md task.
+- This applies only to Backlog.md tasks. Tickets in shared trackers, such as GitHub issues or Linear, can be referenced as usual.
 
 ### Syncing
 
