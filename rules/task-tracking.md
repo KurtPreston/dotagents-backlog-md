@@ -19,6 +19,13 @@ BACKLOG_CWD=~/Code/tasks backlog task edit TASK-7 -s Done --final-summary "Added
 - Never `git commit` in `~/Code/tasks` by hand. Scripts commit it, as described under Syncing.
 - If a sandbox blocks writing to `~/Code/tasks`, ask me for access rather than skipping the update.
 
+### Keeping Tasks Private
+
+The board is my private tracker. No one else can see it, so its task IDs and titles mean nothing to them. Keep tasks out of anything other people read: pull request titles and descriptions, commit messages, branch names, code comments, review replies, issues, and messages.
+
+- Describe the work itself instead, and link the issue, ticket, or thread it came from if there is one.
+- Links go one way: a task references its pull requests, never the reverse.
+
 ### Syncing
 
 The board may be synced between my machines through a private git remote. Sync the board at these points:
