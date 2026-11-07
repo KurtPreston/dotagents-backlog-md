@@ -113,7 +113,18 @@ n now · a agent · v lower priority · l later · d done · x drop · t talk
 | --- | --- | --- |
 | **n** now | The user works it today | `task edit N --due-date TODAY --append-notes "Triage …: working today — <first step>"` |
 | **v** lower priority | It isn't really high priority | `task edit N --priority medium --append-notes "Triage …: lowered — <reason>"` |
-| **l** later | Still high priority, but blocked for a known reason | `task edit N --append-notes "Triage …: stale, kept — <blocker and when to revisit>"` |
+| **l** later | Still high priority, but blocked until a concrete revisit date | `task edit N --due-date YYYY-MM-DD --append-notes "Triage …: stale, kept — <blocker>; revisit YYYY-MM-DD"` |
+
+For **l**, ask for a revisit date before applying the decision. Suggest the
+earliest of the blocker's expected end (if known), a date at most a week
+from today, or a few days before any hard deadline. Record the agreed date
+in both `--due-date` and the note; an open-ended condition isn't enough.
+If the due date held a hard deadline, preserve that deadline in the note.
+
+If a stale task's most recent `stale, kept` note has a revisit date that
+has passed, say how many times earlier triages kept it. Suggest the smallest
+concrete next step doable in under 30 minutes, often a message to send,
+or delegating with **a**, rather than simply parking it again.
 
 **a**, **d**, **x**, and **t** work as in the Waiting pass. Recommend **n**
 for the one or two most important tasks, not all of them, since a day only
