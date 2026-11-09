@@ -1,6 +1,6 @@
 ---
 name: backlog-triage
-description: Archive Done tasks from before this week, raise high-priority tasks untouched for 3+ days, then walk the user through every Waiting task on their Backlog.md board in ~/Code/tasks and optionally their To Do tasks, one at a time, deciding each one's fate. Use when the user runs /backlog-triage or asks to triage, review, or clean up their board or what they're waiting on.
+description: Archive Done tasks from before this week, surface failed, running, and queued agent work, raise high-priority tasks untouched for 3+ days, then walk the user through every Waiting task on their Backlog.md board in ~/Code/tasks and optionally their non-queued To Do tasks, one at a time, deciding each one's fate. Use when the user runs /backlog-triage or asks to triage, review, or clean up their board or what they're waiting on.
 ---
 
 # Backlog Triage
@@ -9,8 +9,9 @@ Waiting holds tasks whose next step belongs to someone else: pull requests in
 review, questions out to other people, work blocked on another task. Left
 alone, it fills with things that already came back or quietly stalled. This
 skill first archives older completions to keep Done focused on this week,
-then raises high-priority work that hasn't moved in days, gives every Waiting
-task a decision, and offers the same pass over To Do.
+then surfaces agent failures and queue status, raises high-priority work that
+hasn't moved in days, gives every Waiting task a decision, and offers the
+same pass over To Do tasks that aren't already delegated.
 
 Your job is to investigate and recommend, not to do the work. Don't fix,
 merge, or post anything during triage. The only work that starts is what the
@@ -65,13 +66,82 @@ can bring a task back. Reload Done to verify the result, and report the
 cutoff, archived count, and any uncertain tasks kept.
 
 If the user requested only cleanup, stop here; otherwise continue with
-stale high-priority tasks even when there were no older Done tasks.
+agent queue status even when there were no older Done tasks.
+
+## 0a. Surface agent queue status
+
+Before stale-priority or Waiting decisions, read the queue configuration and
+the board, even if this machine's delegation mode isn't `queue`:
+
+```sh
+~/.agents/bin/backlog-sidequest mode
+BACKLOG_CWD=~/Code/tasks backlog task list --plain
+BACKLOG_CWD=~/Code/tasks backlog task view TASK-N --plain
+```
+
+Use the printed `label` as the queue label (default `agent`), not a
+hard-coded value. `agent-failed` is the failure marker. If the helper fails,
+report the error and don't guess the label or change queue membership.
+View relevant tasks in full to read assignees, dependencies, and notes.
+Report these groups in order, saying when a group is empty:
+
+1. **Failed — the user's move.** Open tasks labeled `agent-failed` come
+   first, even if they also have the queue label. Show each task's link,
+   title, current status, and last implementation note, including where the
+   agent stopped and any decision it needs. If the last note isn't the
+   failure explanation, also show the latest failure note; if none exists,
+   say the reason wasn't recorded. Investigate before recommending a
+   decision. Ask one task at a time: **r** retry, **o** take over, or **x**
+   drop. Discuss questions without changing the task.
+2. **Running.** List each In Progress task assigned to `@docent-workspace`,
+   regardless of its labels, unless already handled as failed. Use one
+   line per task: link, title, time In Progress, and **possibly stuck** if
+   strictly more than 24 hours. Determine the start from the latest
+   transition into In Progress in the board's git history or a matching
+   claim note, not `updatedAt`, which later edits can refresh. Compare
+   timezone-aware timestamps to now. If the start is uncertain, say
+   "duration unknown"; don't invent an age or conclude the agent is dead.
+3. **Queued.** List each To Do task with the configured queue label, excluding
+   failures and tasks still assigned to `@docent-workspace`. Use one line
+   per task: link, title, and either "ready for pickup" or "blocked by"
+   links to every unfinished dependency with its status. Check dependency
+   tasks; only Done satisfies a dependency. Missing or unreadable
+   dependencies mean readiness is unknown, not ready. Include blocked
+   queued work, not just tasks the watcher can start now.
+
+A To Do task still assigned to `@docent-workspace`, or a claimed task in
+another unexpected status, is inconsistent: report its status and assignee
+separately instead of calling it queued or running. Don't clear a live claim
+or requeue work automatically. Done and Waiting tasks aren't queued just
+because they retain the label; Waiting results still get the normal pass.
+
+For a failed task, re-read it before applying the user's decision. If it has
+been claimed or changed since presentation, refresh its state before acting.
+The examples use `$QUEUE_LABEL` for the label returned by the helper:
+
+| Choice | Commands |
+| --- | --- |
+| **r** retry | `task edit N -s "To Do" -a "" --remove-label agent-failed --add-label "$QUEUE_LABEL" --append-notes "Triage …: retry queued — <reason>"` |
+| **o** take over | `task edit N -s "To Do" -a "" --remove-label agent-failed --remove-label "$QUEUE_LABEL" --append-notes "Triage …: user taking over — <next step>"` |
+| **x** drop | `task edit N -a "" --remove-label agent-failed --remove-label "$QUEUE_LABEL" --append-notes "Triage …: dropped — <reason>"`, then `task archive N` |
+
+Prefix each command with `BACKLOG_CWD=~/Code/tasks backlog`, use `--plain`,
+and sync after each decision. Before retrying, keep or update the
+Implementation Plan with what the failure taught us; preserve dependencies
+so blocked retries still wait. Retry queues for the watcher even when this
+machine normally launches or hands off. Never retry without the user's
+decision.
+
+Skip tasks decided here, queued tasks (including blocked ones), and claimed
+tasks in the stale-priority and ordinary To Do passes. They already have a
+next actor; don't offer to delegate them again. Refresh queue membership
+before later passes, including tasks delegated during this triage.
 
 ## 1. Raise stale high-priority tasks
 
 High-priority work can go untouched for days while triage covers Waiting
-and the day fills with smaller things. Raise it first, so each one gets a
-deliberate decision.
+and the day fills with smaller things. After queue status, raise eligible
+tasks so each one gets a deliberate decision.
 
 ```sh
 BACKLOG_CWD=~/Code/tasks backlog task list -s "To Do" --json
@@ -296,15 +366,19 @@ Show the one-line report, then move on to the next task.
 
 ## 7. The To Do pass
 
-After the last Waiting task, show how many tasks are in To Do and ask whether
-to go through them too. If the user declines, go to the wrap-up.
+After the last Waiting task, refresh queue membership and show how many
+ordinary To Do tasks remain, separately from queued or claimed tasks and
+tasks already decided. Ask whether to go through the remaining tasks too.
+If the user declines, go to the wrap-up.
 
 ```sh
 BACKLOG_CWD=~/Code/tasks backlog task list -s "To Do" --json
 ```
 
-Run the same steps over To Do: investigate every task, present them one at a
-time with the same format and choices, and apply each decision right away.
+Run the same steps over eligible To Do tasks: investigate each, present them
+one at a time with the same format and choices, and apply each decision right
+away. Don't walk queued tasks individually; their one-line queue entries
+already cover them, including those blocked on unfinished dependencies.
 Present high-priority and overdue tasks first, then the rest oldest first,
 still deciding blockers before the tasks that depend on them.
 
@@ -322,6 +396,8 @@ still deciding blockers before the tasks that depend on them.
 Summarize the pass:
 
 - Older Done tasks archived, this week's cutoff, and any uncertain dates kept.
+- Agent failures and their decisions, running tasks and any possibly stuck
+  claims, and queued tasks with their dependency blockers.
 - Each stale high-priority task and its decision, with the ones to work today
   first.
 - Counts per outcome, and one line per task with its decision.
