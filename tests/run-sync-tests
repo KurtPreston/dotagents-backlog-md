@@ -10,6 +10,8 @@ sync="$plugin_dir/scripts/backlog-md-sync"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 export GIT_CONFIG_GLOBAL="$work/gitconfig" GIT_CONFIG_NOSYSTEM=1
+# Keep unscoped CLI calls away from the user's board and exercise explicit board selection
+export BACKLOG_CWD="$work"
 git config --global user.name "Sync Test"
 git config --global user.email "sync-test@example.com"
 git config --global init.defaultBranch main
@@ -46,7 +48,7 @@ check() {
 test_setup_push() {
   git init -q --bare "$remote"
   mkdir "$a" && git -C "$a" init -q
-  (cd "$a" && backlog init sync-test --defaults --integration-mode none >/dev/null)
+  BACKLOG_CWD="$a" backlog init sync-test --defaults --integration-mode none >/dev/null
   sync_in "$a" setup >/dev/null &&
     [[ "$(git -C "$a" rev-parse HEAD)" == "$(git --git-dir="$remote" rev-parse main)" ]] &&
     [[ "$(BACKLOG_CWD="$a" backlog config get remoteOperations)" == true ]] &&
@@ -117,7 +119,7 @@ test_unreachable() {
 test_setup_refuses_merge() {
   local c="$work/c"
   mkdir "$c" && git -C "$c" init -q
-  (cd "$c" && backlog init other --defaults --integration-mode none >/dev/null)
+  BACKLOG_CWD="$c" backlog init other --defaults --integration-mode none >/dev/null
   ! sync_in "$c" setup 2>/dev/null && [[ -z "$(git -C "$c" remote)" ]]
 }
 
