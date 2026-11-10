@@ -52,6 +52,10 @@ Goal: …
 
 - `Repo:` is the GitHub `owner/name`. `Branch:` is a new branch named per the
   branch-name rules, such as with a `compass-` prefix for Compass work in yolo.
+  The `Branch:` line must contain only the branch name, with no prose,
+  parentheses, or `(new)` annotations, because watchers parse the whole value
+  as the branch name. For an existing pull request, use its head branch instead
+  and explain that context in the brief's body, not on the `Branch:` line.
 - Then, briefly: the goal and why it matters; the files, pull requests,
   threads, and tasks to start from, as links; what's already known, so the
   agent doesn't redo it; what done looks like, such as a passing test or a
