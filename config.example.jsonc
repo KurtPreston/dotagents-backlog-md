@@ -19,6 +19,11 @@
 
     // The board's port on 127.0.0.1.
     "port": 6420,
+
+    // The Backlog.md executable that serves the board. Empty means `backlog` on the PATH. Set it
+    // to a full path, such as "~/.local/share/backlog-md/fork/backlog", to serve the board from a
+    // build of a fork while the CLI and agents keep using the installed `backlog`.
+    "executable": "",
   },
 
   "delegation": {

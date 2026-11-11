@@ -51,6 +51,19 @@ backlog board               # Kanban board in the terminal
 
 The web board is always at http://localhost:6420/board, served by a launchd job that `backlog-md-schedule install` sets up. To change its port or turn it off, set `browser.port` or `browser.enabled` in `config.jsonc` and rerun `install`.
 
+### Serving the Board From a Fork
+
+To try a web board feature before it ships in a release, serve the board from a build of a Backlog.md fork while the CLI and agents keep using the installed `backlog`. Build the fork, copy the executable somewhere stable so a rebuild can't replace it under the running server, point `browser.executable` at it, and restart the job:
+
+```sh
+cd ~/Code/Backlog.md && bun install && bun run build
+mkdir -p ~/.local/share/backlog-md/fork && cp dist/backlog ~/.local/share/backlog-md/fork/backlog
+# In config.jsonc: "browser": { "executable": "~/.local/share/backlog-md/fork/backlog" }
+launchctl kickstart -k "gui/$(id -u)/com.kurtpreston.backlog-md-browser"
+```
+
+The build is a standalone executable, so launchd doesn't need Bun on its PATH. Repeat the build, copy and restart after updating the fork. To go back to the installed `backlog`, set `browser.executable` to `""` and restart the job.
+
 ## Scheduling
 
 The job runs through launchd, not cron. If the Mac is asleep at 23:55, cron skips that day's run, while launchd runs it once the Mac wakes. A missed or failed run loses nothing: the next one commits every change since the last commit.
