@@ -11,6 +11,7 @@ A dotagents plugin for tracking all my work, coding and otherwise, in one [Backl
 - `scripts/backlog-sidequest` — the script `/sidequest` uses to read the delegation mode, build the agent's prompt, and launch the configured agent CLI in the background with a log under `~/.local/state/backlog-md/sidequests/`.
 - `scripts/backlog-task-sessions` — `backlog-task-sessions TASK-N [--days N]` lists Copilot CLI, Claude Code, and Zed sessions from the last 14 days that mention a task, newest first, flagging running Copilot sessions as `live`. `/task` uses it to avoid starting work that another session already has in hand.
 - `scripts/backlog-agent-sessions` — `backlog-agent-sessions [--since YYYY-MM-DD | --days N]` lists every Copilot CLI, Claude Code, and Zed session active in a period, oldest first, with its client app, time span, prompt count, folder, and the tasks it named or touched. `backlog-agent-sessions prompts ID` prints one session's prompts. `/weekly-review` uses it to see where the week's agent time went and where agents needed correcting.
+- `scripts/backlog-close-merged` — `backlog-close-merged [--dry-run]` moves each Waiting task with the queue label to Done once the pull request from its brief's `Repo:` and `Branch:` merged, or back to To Do with `agent-failed` when it closed without merging. Tasks that depend on it can then start. Run it on a schedule, such as from docent.
 - `scripts/backlog-md-commit` — commits the task list's changes, with a message that Copilot CLI writes from the day's diff. It falls back to a plain list of changed tasks if Copilot fails, and does nothing when there are no changes. `--dry-run` prints the message without committing. When sync is on, it leaves commits to `backlog-md-sync`.
 - `scripts/backlog-md-sync` — in [synced mode](#syncing-between-machines), commits each change with a plain message, then fetches, rebases, and pushes. `--pull` skips the push, and `setup` connects a machine's board to the remote. It does nothing when sync is off.
 - `scripts/backlog-md-browser` — serves the web board on the port set in `config.jsonc`, for the browser launchd job. It exits with an error rather than switching ports when the port is taken.
@@ -22,6 +23,7 @@ A dotagents plugin for tracking all my work, coding and otherwise, in one [Backl
 - `config.example.jsonc` — this machine's settings, copied to the git-ignored `config.jsonc`.
 - `tests/run-agent-sessions-tests` — runs `backlog-agent-sessions` against fixture sessions for each agent in a temporary home folder, in about a second.
 - `tests/run-sync-tests` — runs `backlog-md-sync` against a temporary remote and two boards standing in for two machines, in about 10 seconds.
+- `tests/run-close-merged-tests` — runs `backlog-close-merged` on a temporary board with a stubbed `gh`, in about 2 seconds.
 
 ## Setup
 
@@ -115,3 +117,5 @@ On each other machine, write the same `config.jsonc` and run the same two comman
 - `queue` adds the `delegation.label` label (default `agent`) and leaves the task in To Do for a program that watches the board, such as [docent](https://github.com/KurtPreston/docent)'s backlog work queue. Turn on sync so the watcher sees tasks you queue on another machine.
 
 Only `queue` adds the label, so a watcher never starts a second agent on a task that was launched or handed off. `/sidequest --now`, `--queue`, or `--handoff` overrides the mode for one task.
+
+A watcher usually moves a finished task to Waiting with its pull request, and merging the pull request doesn't move the task again. So tasks that depend on it would wait forever. Run `backlog-close-merged` on a schedule on the watcher's machine to close them out. It looks up pull requests with `gh`, using the account `github.accounts` in `config.jsonc` names for the repository's owner, or `gh`'s active account.

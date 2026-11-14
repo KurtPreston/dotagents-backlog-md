@@ -1,0 +1,134 @@
+#!/usr/bin/env node
+// Close out queued agent tasks whose pull request has merged, so tasks that depend on them can start.
+// Looks at Waiting tasks carrying the delegation label, finds the pull request for the Repo: and Branch:
+// lines of each task's brief, and moves the task to Done when it merged, or back to To Do when it was
+// closed without merging. Tasks without a brief, a pull request, or with one still open are left alone.
+//
+// Usage:
+//   backlog-close-merged [--dry-run]
+//
+// BACKLOG_CWD names the board (default ~/Code/tasks). BACKLOG_MD_CONFIG overrides the config path, and
+// BACKLOG_MD_SYNC the sync script, for tests.
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Load the plugin's config reader from this script's real location, since ~/.agents/bin holds a symlink
+const scriptDir = dirname(realpathSync(fileURLToPath(import.meta.url)));
+const { readConfig } = await import(join(scriptDir, "..", "lib", "read-config.mjs"));
+
+const dryRun = process.argv.includes("--dry-run");
+const board = process.env.BACKLOG_CWD || join(homedir(), "Code", "tasks");
+const sync = process.env.BACKLOG_MD_SYNC || join(scriptDir, "backlog-md-sync");
+const config = readConfig(process.env.BACKLOG_MD_CONFIG);
+const label = config.delegation?.label || "agent";
+const accounts = config.github?.accounts ?? {};
+const tokens = new Map();
+
+// Run a command and return its stdout, with the board selected for backlog
+function run(command, args, env = {}) {
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    env: { ...process.env, BACKLOG_CWD: board, ...env },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+}
+
+// Pick the gh token for a repository's owner when config maps the owner to an account
+function ghEnv(owner) {
+  const account = accounts[owner];
+  if (!account) {
+    return {};
+  }
+  if (!tokens.has(account)) {
+    tokens.set(account, run("gh", ["auth", "token", "--user", account]).trim());
+  }
+  return { GH_TOKEN: tokens.get(account) };
+}
+
+// Read the Repo: and Branch: lines from the top of a brief
+function briefTarget(plan) {
+  const repo = plan?.match(/^Repo:\s*(\S+)\s*$/m)?.[1];
+  const branch = plan?.match(/^Branch:\s*(\S+)\s*$/m)?.[1];
+  return repo && branch ? { repo, branch } : null;
+}
+
+// List the pull requests opened from the brief's branch, in any state
+function pullRequests({ repo, branch }) {
+  const out = run(
+    "gh",
+    ["pr", "list", "-R", repo, "--head", branch, "--state", "all", "--json", "number,state,url"],
+    ghEnv(repo.split("/")[0]),
+  );
+  return JSON.parse(out);
+}
+
+// Decide what a task's pull requests mean for it, or null to leave it alone
+function outcome(task, prs) {
+  if (prs.length === 0 || prs.some((pr) => pr.state === "OPEN")) {
+    return null;
+  }
+  const merged = prs.find((pr) => pr.state === "MERGED");
+  if (merged) {
+    return { status: "Done", pr: merged, args: ["--final-summary", `Merged ${merged.url}`] };
+  }
+  const closed = prs[0];
+  return {
+    status: "To Do",
+    pr: closed,
+    args: [
+      "--remove-label", label, "--add-label", `${label}-failed`,
+      "--append-notes", `${stamp()}: Pull request closed without merging (${closed.url}). Decide whether to retry or drop.`,
+    ],
+  };
+}
+
+// Local timestamp for notes, like `date '+%Y-%m-%d %H:%M'`
+function stamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Pull the board first so we act on what other machines changed
+if (!dryRun) {
+  run(sync, ["--pull"]);
+}
+const waiting = JSON.parse(run("backlog", ["task", "list", "-s", "Waiting", "-l", label, "--json"])).tasks;
+
+// Check each waiting agent task's pull request and record what changed
+let changed = 0;
+for (const { id } of waiting) {
+  const { task } = JSON.parse(run("backlog", ["task", "view", id, "--json"]));
+  const target = briefTarget(task.implementationPlan);
+  if (!target) {
+    continue;
+  }
+  let prs;
+  try {
+    prs = pullRequests(target);
+  } catch {
+    console.error(`backlog-close-merged: ${id}: couldn't list pull requests for ${target.repo}:${target.branch}`);
+    continue;
+  }
+  const result = outcome(task, prs);
+  if (!result) {
+    continue;
+  }
+
+  // Move the task, adding the pull request as a reference if it isn't one yet
+  console.log(`${id} → ${result.status} (${result.pr.url})${dryRun ? " [dry run]" : ""}`);
+  if (dryRun) {
+    continue;
+  }
+  const refArgs = (task.references ?? []).includes(result.pr.url) ? [] : ["--add-ref", result.pr.url];
+  run("backlog", ["task", "edit", id, "-s", result.status, ...refArgs, ...result.args, "--plain"]);
+  changed++;
+}
+
+// Push the batch once
+if (changed > 0) {
+  run(sync, []);
+}

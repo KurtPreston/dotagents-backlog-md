@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Exercise backlog-close-merged on a temporary board with a stubbed gh: a merged pull request closes its
+# queued task, a closed one sends it back to To Do as failed, and open, missing, or unqueued ones stay put.
+# Prints "ok" or "FAIL" per scenario; exits non-zero on any failure.
+# Usage: tests/run-close-merged-tests
+set -euo pipefail
+
+# Point the script at a temporary board, config, sync script, and gh
+plugin_dir="$(cd "$(dirname "$0")/.." && pwd)"
+close_merged="$plugin_dir/scripts/backlog-close-merged"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+export BACKLOG_CWD="$work/board" BACKLOG_MD_CONFIG="$work/config.jsonc" BACKLOG_MD_SYNC=true
+printf '{ "github": { "accounts": { "me": "bot" } } }\n' >"$BACKLOG_MD_CONFIG"
+failures=0
+
+# The stub gh answers `pr list` from $work/prs/<branch>.json and logs which token each call used
+mkdir -p "$work/bin" "$work/prs"
+cat >"$work/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+dir="$(dirname "$0")/.."
+if [ "$1" = auth ]; then echo "token-for-$4"; exit 0; fi
+while [ $# -gt 0 ]; do [ "$1" = --head ] && branch="$2"; shift; done
+echo "${GH_TOKEN:-none} $branch" >>"$dir/gh.log"
+cat "$dir/prs/$branch.json" 2>/dev/null || echo '[]'
+EOF
+chmod +x "$work/bin/gh"
+export PATH="$work/bin:$PATH"
+
+# Record one scenario's result
+check() {
+  local name="$1"
+  shift
+  if "$@"; then
+    echo "ok   - $name"
+  else
+    echo "FAIL - $name"
+    failures=$((failures + 1))
+  fi
+}
+
+# Make a Waiting task with a brief for REPO and BRANCH, and the given labels
+task() {
+  local title="$1" repo="$2" branch="$3" labels="$4"
+  backlog task create "$title" -s Waiting -l "$labels" --plan "Repo: $repo
+Branch: $branch
+
+Do it." --plain | grep -oE 'TASK-[0-9]+' | head -1
+}
+status() { backlog task view "$1" --plain | sed -n 's/^Status: [^ ]* //p'; }
+labels() { backlog task view "$1" --plain | sed -n 's/^Labels: //p'; }
+pr() { printf '[{"number":%s,"state":"%s","url":"https://github.com/%s/pull/%s"}]\n' "$2" "$3" "$4" "$2" >"$work/prs/$1.json"; }
+
+# Build a board with one task per case
+mkdir "$work/board" && git -C "$work/board" init -q
+backlog init close-test --defaults --integration-mode none >/dev/null 2>&1
+sed -i.bak -e 's/^statuses: .*/statuses: ["To Do", "In Progress", "Waiting", "Done"]/' \
+  -e 's/^remote_operations: .*/remote_operations: false/' "$work/board/backlog/config.yml"
+merged=$(task "Merged" acme/app merged-branch agent)
+closed=$(task "Closed" acme/app closed-branch agent)
+open=$(task "Open" acme/app open-branch agent)
+none=$(task "No PR" acme/app no-branch agent)
+manual=$(task "Not queued" acme/app manual-branch app)
+mine=$(task "Personal" me/tool mine-branch agent)
+pr merged-branch 1 MERGED acme/app
+pr closed-branch 2 CLOSED acme/app
+pr open-branch 3 OPEN acme/app
+pr manual-branch 4 MERGED acme/app
+pr mine-branch 5 MERGED me/tool
+
+# A dry run reports without changing anything
+"$close_merged" --dry-run >"$work/dry.out"
+check "dry run reports the merge" grep -q "^$merged → Done .*\[dry run\]" "$work/dry.out"
+check "dry run changes nothing" test "$(status "$merged")" = Waiting
+
+# A real run moves only the queued tasks whose pull request finished
+"$close_merged" >/dev/null
+check "merged PR closes the task" test "$(status "$merged")" = Done
+check "merged PR becomes a reference" bash -c "backlog task view $merged --plain | grep -q 'acme/app/pull/1'"
+check "closed PR returns task to To Do" test "$(status "$closed")" = "To Do"
+check "closed PR swaps the label" test "$(labels "$closed")" = "agent-failed"
+check "open PR keeps waiting" test "$(status "$open")" = Waiting
+check "missing PR keeps waiting" test "$(status "$none")" = Waiting
+check "unqueued task is left alone" test "$(status "$manual")" = Waiting
+check "owner's account token is used" grep -q '^token-for-bot mine-branch$' "$work/gh.log"
+check "other owners use the active account" grep -q '^none merged-branch$' "$work/gh.log"
+
+[ "$failures" -eq 0 ] || exit 1

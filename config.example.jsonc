@@ -42,4 +42,11 @@
     // ["claude", "-p", "{prompt}", "--dangerously-skip-permissions"].
     "command": ["copilot", "-p", "{prompt}", "--allow-all-tools"],
   },
+
+  "github": {
+    // The gh account to use for each repository owner, when gh is signed in to several, such as
+    // { "my-user": "my-bot-account" }. Owners not listed use gh's active account. Read by
+    // backlog-close-merged when it checks a queued task's pull request.
+    "accounts": {},
+  },
 }
