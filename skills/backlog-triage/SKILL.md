@@ -52,6 +52,8 @@ BACKLOG_CWD=~/Code/tasks backlog task list -s Done --json
   or ambiguous, retain the task and report it rather than guessing.
 - Recheck candidates before archiving so a reopened or newly completed task
   is not removed. Do not edit notes first, which would change `updatedAt`.
+- Never archive a task labeled `report`: its findings haven't been read.
+  Keep it and list it under Reports to read in the queue status.
 
 For each eligible task, then once for the completed batch:
 
@@ -108,6 +110,15 @@ Report these groups in order, saying when a group is empty:
    tasks; only Done satisfies a dependency. Missing or unreadable
    dependencies mean readiness is unknown, not ready. Include blocked
    queued work, not just tasks the watcher can start now.
+4. **Reports to read.** List each open task labeled `report`, as the
+   task-tracking rule's Reports section describes. Also list any Done task
+   whose last note is an agent's unread findings, even without the label.
+   Use one line per task: link, title, the findings' one-line headline, and
+   how long it's been waiting. Ask one task at a time whether to mark it
+   **d** done, which needs a final summary drawn from the findings; **f**
+   create a follow-up task; or **k** keep, to read it later. Remove the
+   `report` label for **d** and **f**. For an unlabeled Done task, **k** adds
+   the label and moves it back to To Do.
 
 A To Do task still assigned to `@docent-workspace`, or a claimed task in
 another unexpected status, is inconsistent: report its status and assignee
@@ -132,8 +143,8 @@ so blocked retries still wait. Retry queues for the watcher even when this
 machine normally launches or hands off. Never retry without the user's
 decision.
 
-Skip tasks decided here, queued tasks (including blocked ones), and claimed
-tasks in the stale-priority and ordinary To Do passes. They already have a
+Skip tasks decided here, queued tasks (including blocked ones), reports,
+and claimed tasks in the stale-priority and ordinary To Do passes. They already have a
 next actor; don't offer to delegate them again. Refresh queue membership
 before later passes, including tasks delegated during this triage.
 
@@ -398,6 +409,7 @@ Summarize the pass:
 - Older Done tasks archived, this week's cutoff, and any uncertain dates kept.
 - Agent failures and their decisions, running tasks and any possibly stuck
   claims, and queued tasks with their dependency blockers.
+- Reports read and their decisions, and reports still waiting to be read.
 - Each stale high-priority task and its decision, with the ones to work today
   first.
 - Counts per outcome, and one line per task with its decision.

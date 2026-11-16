@@ -63,9 +63,17 @@ Track any session that creates a branch or commit. Questions, reviews, and explo
 
 1. **Before starting**, search for a matching open task and reuse it. Otherwise create one. Set it to In Progress and label it with the repository's name, such as `-l dotagents`. Pass `--project` too when another rule names a project for the repository.
 2. **During the work**, append notes for decisions and state worth keeping, especially before stopping partway. Record deferred work, review findings you didn't fix, and promised follow-ups as new To Do tasks instead of leaving them only in the conversation. Give each new task the links it came from.
-3. **When finishing**, set the task to Done with a one- or two-sentence final summary. If it's waiting on someone else, such as a pull request in review, move it to Waiting, add the pull request as a reference, and note who or what it's waiting on. If it's unfinished, leave it In Progress with a note on where it stopped.
+3. **When finishing**, set the task to Done with a one- or two-sentence final summary. If it's waiting on someone else, such as a pull request in review, move it to Waiting, add the pull request as a reference, and note who or what it's waiting on. If it's unfinished, leave it In Progress with a note on where it stopped. A report task finishes differently; see [Reports](#reports).
 
 When I mention something non-code I need to do, such as replying to someone or filing paperwork, offer to add it as a To Do task. Label it (e.g. `errand` or `admin`), pass `--due-date YYYY-MM-DD` when it has a deadline, and attach any thread or document it relates to.
+
+### Reports
+
+Some tasks produce a report rather than code, such as research, an audit, or a measurement. Findings are only worth something once I've read them, so a finished report must not land in Done unread, where the weekly archive sweeps it away.
+
+- When you finish a report task, write the findings into the task's notes, or into a board doc the notes link to. Then leave the task in To Do, clear its assignee, remove the agent queue label, and add the `report` label. Don't set it to Done or Waiting.
+- Start the findings with a one-line headline, so a list of reports can show what each one found.
+- After I've read a report, I decide what happens next: Done with a final summary, a follow-up task, or more research. Remove the `report` label at that point.
 
 ### Assigning a Task to an Agent
 

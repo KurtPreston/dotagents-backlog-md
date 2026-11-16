@@ -62,6 +62,10 @@ Goal: …
   draft pull request; and the limits. Limits include following the
   repository's AGENTS.md, and not merging or posting anything that needs the
   user's approval.
+- For a report task, such as research, an audit, or a measurement, make the
+  done line say to finish as the task-tracking rule's Reports section
+  describes: findings in the notes under a one-line headline, task left in
+  To Do with the `report` label and without the queue label, never Done.
 - If the task already has a brief, keep what still holds and add what this
   conversation learned, rather than replacing it.
 - If the work would conflict with something still in progress, such as an
