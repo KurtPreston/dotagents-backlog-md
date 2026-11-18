@@ -1,2 +1,5 @@
 # This machine's settings; see config.example.jsonc
 /config.jsonc
+
+# macOS metadata
+.DS_Store
